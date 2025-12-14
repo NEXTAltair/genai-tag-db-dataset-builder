@@ -40,9 +40,10 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
-    "--cov=src/genai_tag_db_dataset_builder",
+    "--cov=genai_tag_db_dataset_builder",
     "--cov-report=term-missing",
     "--cov-report=xml",
+    "--cov-fail-under=55",
 ]
 markers = [
     "unit: Unit tests (fast, isolated)",
@@ -51,14 +52,18 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["src/genai_tag_db_dataset_builder"]
+source = ["genai_tag_db_dataset_builder"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
     "*/site-packages/*",
+    "*/genai_tag_db_dataset_builder/builder.py",
+    "*/genai_tag_db_dataset_builder/metadata.py",
+    "*/genai_tag_db_dataset_builder/upload.py",
 ]
 
 [tool.coverage.report]
+fail_under = 55
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

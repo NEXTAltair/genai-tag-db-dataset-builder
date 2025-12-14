@@ -1,0 +1,106 @@
+name: Build and Publish Dataset
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Dataset version (e.g., v1.0.0)'
+        required: true
+        type: string
+      upload_to_hf:
+        description: 'Upload to HuggingFace'
+        required: true
+        type: boolean
+        default: false
+
+env:
+  DATASET_NAME: unified-tag-database
+  HF_REPO: NEXTAltair/unified-tag-database
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: |
+          uv sync --dev
+
+      - name: Download source data
+        run: |
+          mkdir -p data/sources
+          # Download tags_v4.db
+          wget -O data/sources/tags_v4.db https://huggingface.co/datasets/deepghs/site_tags/resolve/main/tags_v4.db || true
+
+      - name: Run dataset builder
+        run: |
+          uv run python -m genai_tag_db_dataset_builder.builder \
+            --output data/output/unified_tags.db \
+            --version ${{ github.event.inputs.version }}
+
+      - name: Verify database integrity
+        run: |
+          uv run python -c "
+          import sqlite3
+          conn = sqlite3.connect('data/output/unified_tags.db')
+          cursor = conn.execute('PRAGMA integrity_check')
+          result = cursor.fetchone()[0]
+          assert result == 'ok', f'Database integrity check failed: {result}'
+          print('Database integrity check passed')
+          conn.close()
+          "
+
+      - name: Generate metadata
+        run: |
+          uv run python -m genai_tag_db_dataset_builder.metadata \
+            --db data/output/unified_tags.db \
+            --output data/output/metadata.json \
+            --version ${{ github.event.inputs.version }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-tag-database-${{ github.event.inputs.version }}
+          path: |
+            data/output/unified_tags.db
+            data/output/metadata.json
+          retention-days: 30
+
+      - name: Upload to HuggingFace
+        if: ${{ github.event.inputs.upload_to_hf == 'true' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run python -m genai_tag_db_dataset_builder.upload \
+            --db data/output/unified_tags.db \
+            --metadata data/output/metadata.json \
+            --repo ${{ env.HF_REPO }} \
+            --version ${{ github.event.inputs.version }} \
+            --token $HF_TOKEN
+
+      - name: Create release
+        if: ${{ github.event.inputs.upload_to_hf == 'true' }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            data/output/unified_tags.db
+            data/output/metadata.json
