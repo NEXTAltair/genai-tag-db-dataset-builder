@@ -1,7 +1,11 @@
-"""Tag normalization functions.
+"""タグ正規化（source_tag → TAGS.tag）.
 
-This module provides tag normalization functionality for converting source tags
-from various formats into the standardized TAGS.tag format.
+入力タグを、DBで扱う正規化済みタグ（TAGS.tag）に変換するための関数群です。
+
+設計方針:
+    - 正規化は「入力 → TAGS.tag」の変換に限定する（DB内のtagを再正規化しない）
+    - 顔文字（短いエモーティコン）は壊れやすいため、保守的に判定して通常正規化から除外する
+    - 括弧は genai-tag-db-tools の TagCleaner 互換のためエスケープする
 """
 
 from __future__ import annotations
@@ -16,17 +20,17 @@ _DISAMBIGUATION = re.compile(r"^[a-z0-9][a-z0-9_./:-]*_\([a-z0-9][a-z0-9_./:-]*\
 _SLASH_TAG = re.compile(r"^/[a-z0-9][a-z0-9_./:-]*/$", re.IGNORECASE)
 _PARENS_WORD = re.compile(r"^\([a-z0-9_]{2,}\)$", re.IGNORECASE)
 
-# Characters commonly used in short ASCII kaomoji/emoticons.
+# 短いASCII顔文字/エモーティコンでよく使われる文字
 _FACE_CHARS = r"0-9oOxXtTuUvV\.\-\+;:\^<>=_"
 _FACE_UNDERSCORE = re.compile(rf"^[{_FACE_CHARS}]{{1,3}}(?:_[{_FACE_CHARS}]{{1,3}})+$")
 _FACE_PARENS = re.compile(rf"^\([{_FACE_CHARS}]{{1,5}}(?:_[{_FACE_CHARS}]{{1,5}})*\)$")
 
 
 def is_kaomoji(text: str) -> bool:
-    """Heuristically detect kaomoji/emoticon-like tokens.
+    """顔文字/エモーティコンっぽいトークンを（保守的に）判定する.
 
-    This is deterministic and deliberately conservative. The main purpose is
-    to avoid breaking kaomoji by transformations like underscore replacement.
+    ここは決定的（deterministic）かつ保守的な判定に寄せています。
+    目的は「顔文字を通常タグとして扱って _ → space 置換などで壊す」事故を避けることです。
     """
     s = text.strip()
     if not s:
@@ -35,12 +39,11 @@ def is_kaomoji(text: str) -> bool:
     if len(s) > 24:
         return False
 
-    # Exclude common "disambiguation tags" like `bow_(weapon)` or `ganyu_(genshin_impact)`.
-    # These are standard tags, not kaomoji.
+    # `bow_(weapon)` のような曖昧さ回避タグは通常タグなので除外
     if _DISAMBIGUATION.match(s):
         return False
 
-    # Exclude path-like tags such as `/mlp/`.
+    # `/mlp/` のようなパス風タグは除外
     if _SLASH_TAG.match(s):
         return False
 
@@ -50,18 +53,23 @@ def is_kaomoji(text: str) -> bool:
     if _COLON_ANGLE.match(s):
         return True
 
-    # Parenthesized faces like (o_o), (9), etc. - check before _PARENS_WORD
+    # (o_o) のような括弧付き顔文字（単語括弧より先に判定）
     if _FACE_PARENS.match(s):
         return True
 
-    # Exclude parenthesized word tags such as `(mlp)` but keep face-like ones handled above.
+    # `(mlp)` のような括弧付き単語タグは除外（顔文字は上で拾っている）
     if _PARENS_WORD.match(s):
         return False
 
-    # Underscore-separated faces like ^_^, 0_0, >_<, 0_0_0, etc.
+    # ^_^ / 0_0 / >_< などのアンダースコア区切り顔文字
     if _FACE_UNDERSCORE.match(s):
-        # Avoid false positives like `au_ra` by requiring at least one non-letter signal.
-        if any(ch in s for ch in "^;:<>=") or any(ch.isdigit() for ch in s) or "o" in s.lower() or "x" in s.lower():
+        # `au_ra` のような誤検出を避けるため、記号/数字などのシグナルを要求
+        if (
+            any(ch in s for ch in "^;:<>=")
+            or any(ch.isdigit() for ch in s)
+            or "o" in s.lower()
+            or "x" in s.lower()
+        ):
             return True
 
     alnum = 0
@@ -75,9 +83,9 @@ def is_kaomoji(text: str) -> bool:
         else:
             punct += 1
 
-    # Final conservative heuristic fallback:
-    # - must contain at least one typical face punctuation
-    # - must be mostly non-alphanumeric
+    # 最終フォールバック（かなり保守的）
+    # - 顔文字っぽい記号を含む
+    # - 非英数字が多い
     if any(ch in s for ch in "^;:<>=") and (punct >= 2) and (alnum <= 3) and (not has_space):
         return True
 
@@ -85,23 +93,37 @@ def is_kaomoji(text: str) -> bool:
 
 
 def _escape_parentheses(text: str) -> str:
-    # Match genai-tag-db-tools TagCleaner behavior: escape parentheses.
+    """括弧をエスケープする（genai-tag-db-tools互換）."""
     return _UNESCAPED_LPAREN.sub(r"\\(", _UNESCAPED_RPAREN.sub(r"\\)", text))
 
 
-def normalize_tag(source_tag: str) -> str:
-    """入力CSVのsource_tagをTAGS.tagに変換する正規化関数.
+def canonicalize_source_tag(source_tag: str) -> str:
+    """source_tag（入力ソースの代表表記）をDB保存向けに整形する.
 
-    この関数はDB外のデータ変換のみに使用します。
-    DB内のtag列は既に正規化済みです。
+    方針（会話で確定した内容）:
+    - `source_tag` は代表1つのみ保持し、case揺れはノイズなので小文字に統一する
+    - ただし顔文字は小文字化で壊れるため、そのまま保持する
+    - `source_tag` 側ではアンダースコア置換や括弧エスケープは行わない（元表記を残す）
+      - `_ -> space` と括弧エスケープは TAGS.tag 側（`normalize_tag`）の責務
+    """
+    s = source_tag.strip()
+    if not s:
+        return ""
+
+    if is_kaomoji(s):
+        return s
+
+    return s.lower()
+
+
+def normalize_tag(source_tag: str) -> str:
+    """入力の source_tag を TAGS.tag に変換する正規化関数.
 
     Args:
-        source_tag: 入力ソースからの生データ
-            例: "spiked_collar", "Witch", ":D"
+        source_tag: 入力ソースからの生タグ（例: "spiked_collar", "Witch", ":D"）
 
     Returns:
-        正規化済みタグ
-            例: "spiked collar", "witch", ":D"
+        正規化済みタグ（例: "spiked collar", "witch", ":D"）
 
     Examples:
         >>> normalize_tag("spiked_collar")
@@ -117,7 +139,7 @@ def normalize_tag(source_tag: str) -> str:
     if not s:
         return ""
 
-    # 顔文字判定を先に行う（lowercase前の文字列で判定）
+    # 顔文字は lowercase/アンダースコア置換をすると壊れるので、先に除外する
     if is_kaomoji(s):
         # 顔文字は正規化から除外（括弧エスケープのみ）
         return _escape_parentheses(s)

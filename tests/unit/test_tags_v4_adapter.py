@@ -1,4 +1,4 @@
-"""Unit tests for Tags_v4_Adapter."""
+"""Tags_v4_Adapter のユニット/統合テスト."""
 
 import os
 from pathlib import Path
@@ -123,3 +123,26 @@ class TestTags_v4_Adapter:
         # 正の整数であることを確認
         assert isinstance(next_id, int)
         assert next_id > 0
+
+    def test_deduplicate_tags_removes_duplicates(self) -> None:
+        """重複タグが除去されることを確認."""
+        import polars as pl
+
+        # 重複タグを含むモックDataFrame（tag_id=1, 5でtagが同じ）
+        tags_df = pl.DataFrame(
+            {
+                "tag_id": [1, 2, 3, 5, 10],
+                "tag": ["witch", "mage", "spiked collar", "witch", "wizard"],
+                "source_tag": ["Witch", "Mage", "Spiked_Collar", "witch", "Wizard"],
+            }
+        )
+
+        adapter = Tags_v4_Adapter(__file__)  # Pathは使用されないのでダミー
+        deduplicated = adapter._deduplicate_tags(tags_df)
+
+        # "witch"の重複が除去され、最小tag_id (1) のみが残る
+        assert len(deduplicated) == 4
+        witch_rows = deduplicated.filter(pl.col("tag") == "witch")
+        assert len(witch_rows) == 1
+        assert witch_rows["tag_id"][0] == 1
+        assert witch_rows["source_tag"][0] == "witch"

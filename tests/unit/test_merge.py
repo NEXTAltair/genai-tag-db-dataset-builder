@@ -1,7 +1,6 @@
 """Unit tests for merge functionality."""
 
 import polars as pl
-import pytest
 
 from genai_tag_db_dataset_builder.core.merge import (
     detect_conflicts,
@@ -59,6 +58,22 @@ class TestMergeTags:
 
         assert len(result) == 0
 
+    def test_merge_tags_raises_on_missing_source_tag_column(self) -> None:
+        """source_tag列がない場合にValueErrorを発生させることを確認."""
+        import pytest
+
+        existing_tags = {"witch"}
+        # source_tag列のないDataFrame
+        new_df = pl.DataFrame(
+            {
+                "tag": ["Witch", "new_tag"],
+                "type_id": [4, 0],
+            }
+        )
+
+        with pytest.raises(ValueError, match="merge_tags\\(\\) requires 'source_tag' column"):
+            merge_tags(existing_tags, new_df, 100)
+
 
 class TestProcessDeprecatedTags:
     """process_deprecated_tags関数のテスト."""
@@ -102,6 +117,32 @@ class TestProcessDeprecatedTags:
 
         # canonicalのみ（nonexistentはtags_mappingに無いのでスキップ）
         assert len(records) == 1
+
+    def test_process_deprecated_tags_logs_missing_aliases(self) -> None:
+        """存在しないaliasがある場合にWARNINGログを出力することを確認."""
+        from unittest.mock import patch
+
+        tags_mapping = {"witch": 1, "mage": 2}
+        # "nonexistent1"と"nonexistent2"はmappingに存在しない
+        deprecated_tags = "mage,nonexistent1,nonexistent2"
+
+        with patch("genai_tag_db_dataset_builder.core.merge.logger.warning") as mock_warning:
+            records = process_deprecated_tags("witch", deprecated_tags, 1, tags_mapping)
+
+        # canonicalとmageの2レコードのみ（nonexistent1/2はスキップ）
+        assert len(records) == 2
+
+        # logger.warningが1回呼ばれたことを確認
+        mock_warning.assert_called_once()
+        warning_message = mock_warning.call_args[0][0]
+
+        # ログメッセージの内容を確認
+        assert "Skipped 2 alias(es) missing from TAGS table" in warning_message
+        assert "nonexistent1" in warning_message
+        assert "nonexistent2" in warning_message
+        assert "canonical: witch" in warning_message
+        assert "format_id: 1" in warning_message
+        assert "Ensure two-pass processing" in warning_message
 
 
 class TestDetectConflicts:

@@ -1,4 +1,4 @@
-"""Data source adapters for tag database building."""
+"""タグDB構築用のデータソースアダプタ群."""
 
 from .base_adapter import STANDARD_COLUMNS, BaseAdapter
 from .csv_adapter import CSV_Adapter

@@ -1,7 +1,6 @@
-"""Conflict detection and reporting.
+"""衝突検出結果の出力（レポート）.
 
-This module provides conflict detection and CSV report generation for
-tag database merging.
+タグDBマージ時の衝突（type_id不一致、alias変更など）をCSVとして出力します。
 """
 
 from __future__ import annotations
@@ -14,28 +13,22 @@ import polars as pl
 def export_conflict_reports(
     conflicts: dict[str, pl.DataFrame],
     output_dir: Path | str,
-) -> dict[str, Path]:
-    """衝突レポートをCSVファイルに出力.
+) -> dict[str, Path | None]:
+    """衝突レポートをCSVファイルとして出力する.
 
     Args:
-        conflicts: detect_conflicts()の返却値
+        conflicts: detect_conflicts() の戻り値（衝突情報）
         output_dir: 出力ディレクトリ
 
     Returns:
-        生成されたCSVファイルのパス辞書
-        - "type_conflicts": type_id_conflicts.csvのパス
-        - "alias_changes": alias_changes.csvのパス
-
-    Examples:
-        >>> conflicts = detect_conflicts(existing_df, new_df)
-        >>> paths = export_conflict_reports(conflicts, "reports/")
-        >>> paths["type_conflicts"]
-        PosixPath('reports/type_id_conflicts.csv')
+        出力したCSVのパス（衝突が無ければ None）
+        - "type_conflicts": type_id_conflicts.csv
+        - "alias_changes": alias_changes.csv
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    result_paths = {}
+    result_paths: dict[str, Path | None] = {}
 
     # type_id不一致レポート
     type_conflicts_path = output_dir / "type_id_conflicts.csv"

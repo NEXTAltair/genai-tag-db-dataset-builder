@@ -1,7 +1,10 @@
-"""Database creation and optimization utilities.
+"""SQLiteデータベース作成・最適化ユーティリティ.
 
-This module provides SQLite database creation and optimization functionality
-for the tag database builder.
+タグDBビルダー用の SQLite 作成、インデックス作成、最適化（VACUUM/ANALYZE）を提供します。
+
+注意:
+    PRAGMA のうち、cache_size / temp_store / mmap_size / locking_mode などは接続単位の設定です。
+    DBファイルへ恒久的に「書き込まれる設定」ではない点に注意してください。
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ from pathlib import Path
 
 from loguru import logger
 
-# ビルド時PRAGMA設定（速度優先）
+# ビルド時PRAGMA（速度優先）
 BUILD_TIME_PRAGMAS = [
     "PRAGMA journal_mode = OFF;",  # WALオフ（ビルド高速化）
     "PRAGMA synchronous = OFF;",  # 同期オフ（ビルド高速化）
@@ -20,40 +23,148 @@ BUILD_TIME_PRAGMAS = [
     "PRAGMA locking_mode = EXCLUSIVE;",  # 排他ロック（単一プロセス）
 ]
 
-# 配布時PRAGMA設定（安全性・並行性優先）
+# 配布時PRAGMA（安全性・並行性優先）
 DISTRIBUTION_PRAGMAS = [
-    "PRAGMA journal_mode = WAL;",  # WAL有効
+    "PRAGMA journal_mode = WAL;",  # WAL有効（読み取り並行性）
     "PRAGMA synchronous = NORMAL;",
     "PRAGMA cache_size = -64000;",  # 64MB cache
     "PRAGMA temp_store = MEMORY;",
     "PRAGMA mmap_size = 268435456;",  # 256MB mmap
 ]
 
-# 必須インデックス（実クエリベース）
+# 必須インデックス（想定クエリに基づく）
 REQUIRED_INDEXES = [
     # TAGS検索用（部分一致・完全一致）
     "CREATE INDEX IF NOT EXISTS idx_tags_tag ON TAGS(tag);",
     "CREATE INDEX IF NOT EXISTS idx_tags_source_tag ON TAGS(source_tag);",
-    # TAG_STATUS検索用（format別、type別）
+    # TAG_STATUS検索用（format/type/置換先）
     "CREATE INDEX IF NOT EXISTS idx_tag_status_format ON TAG_STATUS(format_id);",
     "CREATE INDEX IF NOT EXISTS idx_tag_status_type ON TAG_STATUS(type_id);",
     "CREATE INDEX IF NOT EXISTS idx_tag_status_preferred ON TAG_STATUS(preferred_tag_id);",
-    # TAG_TRANSLATIONS検索用（言語別、翻訳文検索）
+    # TAG_TRANSLATIONS検索用（言語別・翻訳検索）
     "CREATE INDEX IF NOT EXISTS idx_translations_tag_lang ON TAG_TRANSLATIONS(tag_id, language);",
     "CREATE INDEX IF NOT EXISTS idx_translations_text ON TAG_TRANSLATIONS(translation);",
-    # TAG_USAGE_COUNTS検索用（ソート用インデックス）
+    # TAG_USAGE_COUNTS検索用（count順ソート）
     "CREATE INDEX IF NOT EXISTS idx_usage_counts_count ON TAG_USAGE_COUNTS(count DESC);",
 ]
 
+# DBスキーマ（tags_v4.db 互換ベース）
+SCHEMA_SQL = [
+    """
+    CREATE TABLE IF NOT EXISTS TAGS (
+        tag_id INTEGER NOT NULL PRIMARY KEY,
+        source_tag TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        UNIQUE(tag)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS TAG_FORMATS (
+        format_id INTEGER NOT NULL PRIMARY KEY,
+        format_name TEXT NOT NULL,
+        description TEXT,
+        UNIQUE(format_name)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS TAG_TYPE_NAME (
+        type_name_id INTEGER NOT NULL PRIMARY KEY,
+        type_name TEXT NOT NULL,
+        description TEXT,
+        UNIQUE(type_name)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS TAG_TYPE_FORMAT_MAPPING (
+        format_id INTEGER NOT NULL,
+        type_id INTEGER NOT NULL,
+        type_name_id INTEGER NOT NULL,
+        description TEXT,
+        PRIMARY KEY (format_id, type_id),
+        FOREIGN KEY(format_id) REFERENCES TAG_FORMATS(format_id),
+        FOREIGN KEY(type_name_id) REFERENCES TAG_TYPE_NAME(type_name_id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS TAG_STATUS (
+        tag_id INTEGER NOT NULL,
+        format_id INTEGER NOT NULL,
+        type_id INTEGER NOT NULL,
+        alias BOOLEAN NOT NULL,
+        preferred_tag_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        PRIMARY KEY (tag_id, format_id),
+        FOREIGN KEY(tag_id) REFERENCES TAGS(tag_id),
+        FOREIGN KEY(format_id) REFERENCES TAG_FORMATS(format_id),
+        FOREIGN KEY(preferred_tag_id) REFERENCES TAGS(tag_id),
+        FOREIGN KEY(format_id, type_id) REFERENCES TAG_TYPE_FORMAT_MAPPING(format_id, type_id),
+        CONSTRAINT ck_preferred_tag_consistency CHECK (
+            (alias = false AND preferred_tag_id = tag_id) OR
+            (alias = true AND preferred_tag_id != tag_id)
+        )
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS TAG_TRANSLATIONS (
+        translation_id INTEGER NOT NULL PRIMARY KEY,
+        tag_id INTEGER NOT NULL,
+        language TEXT,
+        translation TEXT,
+        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        FOREIGN KEY(tag_id) REFERENCES TAGS(tag_id),
+        UNIQUE(tag_id, language, translation)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS TAG_USAGE_COUNTS (
+        tag_id INTEGER NOT NULL,
+        format_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+        PRIMARY KEY (tag_id, format_id),
+        FOREIGN KEY(tag_id) REFERENCES TAGS(tag_id),
+        FOREIGN KEY(format_id) REFERENCES TAG_FORMATS(format_id),
+        UNIQUE(tag_id, format_id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS DATABASE_METADATA (
+        key TEXT NOT NULL PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """,
+]
+
+
+def create_schema(db_path: Path | str) -> None:
+    """DBスキーマ（テーブル）を作成する."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        msg = f"Database does not exist: {db_path}"
+        raise FileNotFoundError(msg)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        for stmt in SCHEMA_SQL:
+            conn.executescript(stmt)
+        conn.commit()
+    finally:
+        conn.close()
+
 
 def create_database(db_path: Path | str) -> None:
-    """データベース作成（page_size/auto_vacuum設定込み）.
+    """データベースファイルを新規作成する（page_size / auto_vacuum 設定込み）.
 
     Args:
         db_path: 作成するデータベースファイルパス
 
     Note:
-        page_sizeとauto_vacuumはDB作成前にのみ設定可能
+        page_size と auto_vacuum はDB作成前にのみ有効です。
     """
     db_path = Path(db_path)
 
@@ -64,7 +175,6 @@ def create_database(db_path: Path | str) -> None:
     logger.info(f"Creating database: {db_path}")
 
     conn = sqlite3.connect(db_path)
-
     try:
         # DB作成時にのみ有効な設定
         conn.execute("PRAGMA page_size = 4096;")
@@ -74,6 +184,10 @@ def create_database(db_path: Path | str) -> None:
         for pragma in BUILD_TIME_PRAGMAS:
             conn.execute(pragma)
             logger.debug(f"Applied: {pragma}")
+
+        # スキーマ作成（初回のみ）
+        for stmt in SCHEMA_SQL:
+            conn.executescript(stmt)
 
         conn.commit()
         logger.info("Database created successfully")
@@ -86,7 +200,7 @@ def create_database(db_path: Path | str) -> None:
 
 
 def build_indexes(db_path: Path | str) -> None:
-    """インデックス構築.
+    """必須インデックスを作成する.
 
     Args:
         db_path: データベースファイルパス
@@ -100,7 +214,6 @@ def build_indexes(db_path: Path | str) -> None:
     logger.info(f"Building indexes: {db_path}")
 
     conn = sqlite3.connect(db_path)
-
     try:
         for index_sql in REQUIRED_INDEXES:
             logger.debug(f"Creating index: {index_sql}")
@@ -117,15 +230,15 @@ def build_indexes(db_path: Path | str) -> None:
 
 
 def optimize_database(db_path: Path | str) -> None:
-    """データベース最適化（ビルド完了後）.
+    """データベースを最適化する（ビルド完了後の処理）.
 
     Args:
         db_path: データベースファイルパス
 
     Note:
-        正しい順序: VACUUM → ANALYZE
-        - VACUUM: 断片化解消、削除された領域回収、インデックス再構築
-        - ANALYZE: インデックス統計を収集（VACUUMで再構築されたインデックスの統計が必要）
+        正しい順序は VACUUM → ANALYZE です。
+        - VACUUM: 断片化解消、削除領域回収、インデックス再構築
+        - ANALYZE: インデックス統計の収集（VACUUM後に必要）
     """
     db_path = Path(db_path)
 
@@ -136,7 +249,6 @@ def optimize_database(db_path: Path | str) -> None:
     logger.info(f"Optimizing database: {db_path}")
 
     conn = sqlite3.connect(db_path)
-
     try:
         # 1. VACUUMで断片化解消
         logger.info("Running VACUUM...")
@@ -146,7 +258,7 @@ def optimize_database(db_path: Path | str) -> None:
         logger.info("Running ANALYZE...")
         conn.execute("ANALYZE;")
 
-        # 3. 配布用PRAGMA設定
+        # 3. 配布時PRAGMA設定
         logger.info("Applying distribution PRAGMA settings...")
         for pragma in DISTRIBUTION_PRAGMAS:
             conn.execute(pragma)

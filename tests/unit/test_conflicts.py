@@ -22,9 +22,7 @@ class TestExportConflictReports:
             }
         )
 
-        alias_changes = pl.DataFrame(
-            {"tag": ["wizard"], "format_id": [1], "alias": [0], "alias_new": [1]}
-        )
+        alias_changes = pl.DataFrame({"tag": ["wizard"], "format_id": [1], "alias": [0], "alias_new": [1]})
 
         conflicts = {"type_conflicts": type_conflicts, "alias_changes": alias_changes}
 

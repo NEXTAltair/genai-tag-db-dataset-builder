@@ -1,7 +1,6 @@
-"""Metadata generation for dataset.
+"""データセットのメタデータ生成.
 
-This module generates comprehensive metadata about the built dataset,
-including statistics, schema information, and build details.
+構築済みデータベースの統計情報、スキーマ概要、ビルド情報などをJSONとして出力します。
 """
 
 from __future__ import annotations
@@ -20,15 +19,15 @@ def generate_metadata(
     output_path: Path | str,
     version: str = "1.0.0",
 ) -> dict:
-    """Generate metadata for the dataset.
+    """データセットのメタデータを生成する.
 
     Args:
-        db_path: Path to the built database
-        output_path: Output path for metadata JSON
-        version: Dataset version string
+        db_path: 構築済みデータベースのパス
+        output_path: メタデータJSONの出力パス
+        version: データセットバージョン
 
     Returns:
-        Metadata dictionary
+        メタデータ辞書
     """
     db_path = Path(db_path)
     output_path = Path(output_path)
@@ -38,26 +37,28 @@ def generate_metadata(
     conn = sqlite3.connect(db_path)
 
     try:
-        # Basic statistics
+        # 基本統計
         tags_count = conn.execute("SELECT COUNT(*) FROM TAGS").fetchone()[0]
         formats_count = conn.execute("SELECT COUNT(*) FROM TAG_FORMATS").fetchone()[0]
         type_names_count = conn.execute("SELECT COUNT(*) FROM TAG_TYPE_NAME").fetchone()[0]
         translations_count = conn.execute("SELECT COUNT(*) FROM TAG_TRANSLATIONS").fetchone()[0]
 
-        # Per-format statistics
+        # format別統計
         format_stats = []
-        formats = conn.execute("SELECT format_id, format_name FROM TAG_FORMATS ORDER BY format_id").fetchall()
+        formats = conn.execute(
+            "SELECT format_id, format_name FROM TAG_FORMATS ORDER BY format_id"
+        ).fetchall()
         for format_id, format_name in formats:
             count = conn.execute(
                 "SELECT COUNT(DISTINCT tag_id) FROM TAG_STATUS WHERE format_id = ?", (format_id,)
             ).fetchone()[0]
             format_stats.append({"format_id": format_id, "format_name": format_name, "tag_count": count})
 
-        # Database file size
+        # DBファイルサイズ
         db_size_bytes = db_path.stat().st_size
         db_size_mb = db_size_bytes / (1024 * 1024)
 
-        # Build metadata
+        # メタデータ組み立て
         metadata = {
             "version": version,
             "build_date": datetime.now(UTC).isoformat(),
@@ -90,7 +91,14 @@ def generate_metadata(
                 },
                 "TAG_TRANSLATIONS": {
                     "description": "Tag translations",
-                    "columns": ["translation_id", "tag_id", "language", "translation", "created_at", "updated_at"],
+                    "columns": [
+                        "translation_id",
+                        "tag_id",
+                        "language",
+                        "translation",
+                        "created_at",
+                        "updated_at",
+                    ],
                 },
                 "TAG_USAGE_COUNTS": {
                     "description": "Tag usage statistics per format",
@@ -111,7 +119,7 @@ def generate_metadata(
             },
         }
 
-        # Write metadata
+        # 書き出し
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
@@ -127,7 +135,7 @@ def generate_metadata(
 
 
 def main() -> None:
-    """CLI entry point."""
+    """CLI エントリポイント."""
     parser = argparse.ArgumentParser(description="Generate dataset metadata")
     parser.add_argument(
         "--db",

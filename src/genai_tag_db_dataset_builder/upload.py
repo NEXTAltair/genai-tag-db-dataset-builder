@@ -1,6 +1,6 @@
-"""HuggingFace dataset uploader.
+"""HuggingFace へのアップローダー.
 
-This module handles uploading the built database and metadata to HuggingFace Hub.
+構築済みのDBとメタデータを HuggingFace Hub（datasets）へアップロードします。
 """
 
 from __future__ import annotations
@@ -21,18 +21,18 @@ def upload_to_huggingface(
     token: str,
     private: bool = False,
 ) -> str:
-    """Upload dataset to HuggingFace Hub.
+    """データセットを HuggingFace Hub にアップロードする.
 
     Args:
-        db_path: Path to the built database
-        metadata_path: Path to metadata JSON
-        repo_id: HuggingFace repository ID (e.g., 'username/repo-name')
-        version: Dataset version string
-        token: HuggingFace API token
-        private: Whether to create a private repository
+        db_path: 構築済みデータベースのパス
+        metadata_path: メタデータJSONのパス
+        repo_id: HuggingFace リポジトリID（例: 'username/repo-name'）
+        version: データセットバージョン
+        token: HuggingFace APIトークン
+        private: private リポジトリを作るかどうか
 
     Returns:
-        URL to the uploaded dataset
+        アップロード先URL
     """
     db_path = Path(db_path)
     metadata_path = Path(metadata_path)
@@ -101,14 +101,14 @@ def upload_to_huggingface(
 
 
 def generate_readme(metadata_path: Path, version: str) -> str:
-    """Generate README content from metadata.
+    """メタデータから README（Dataset Card）を生成する.
 
     Args:
-        metadata_path: Path to metadata JSON
-        version: Dataset version
+        metadata_path: メタデータJSONのパス
+        version: データセットバージョン
 
     Returns:
-        README markdown content
+        README（Markdown）本文
     """
     with metadata_path.open("r", encoding="utf-8") as f:
         metadata = json.load(f)
@@ -140,15 +140,15 @@ A comprehensive, unified tag database compiled from multiple sources including D
 
 ## Version
 
-**{version}** - Built on {metadata['build_date']}
+**{version}** - Built on {metadata["build_date"]}
 
 ## Statistics
 
-- **Total Tags**: {stats['total_tags']:,}
-- **Total Formats**: {stats['total_formats']}
-- **Total Type Names**: {stats['total_type_names']}
-- **Total Translations**: {stats['total_translations']:,}
-- **Database Size**: {stats['database_size_mb']} MB
+- **Total Tags**: {stats["total_tags"]:,}
+- **Total Formats**: {stats["total_formats"]}
+- **Total Type Names**: {stats["total_type_names"]}
+- **Total Translations**: {stats["total_translations"]:,}
+- **Database Size**: {stats["database_size_mb"]} MB
 
 ### Per-Format Statistics
 
@@ -236,10 +236,10 @@ MIT License
 If you use this dataset in your research or project, please cite:
 
 ```bibtex
-@misc{{unified-tag-database-{version.replace('.', '-')},
+@misc{{unified-tag-database-{version.replace(".", "-")},
   author = {{NEXTAltair}},
   title = {{Unified Tag Database}},
-  year = {{{metadata['build_date'][:4]}}},
+  year = {{{metadata["build_date"][:4]}}},
   version = {{{version}}},
   url = {{https://huggingface.co/datasets/NEXTAltair/unified-tag-database}}
 }}
@@ -257,7 +257,7 @@ Special thanks to:
 
 
 def main() -> None:
-    """CLI entry point."""
+    """CLI エントリポイント."""
     parser = argparse.ArgumentParser(description="Upload dataset to HuggingFace")
     parser.add_argument(
         "--db",

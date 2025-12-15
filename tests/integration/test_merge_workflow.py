@@ -135,9 +135,7 @@ class TestMergeWorkflow:
             {"tag": [], "format_id": [], "type_id": [], "alias": []},
             schema={"tag": pl.String, "format_id": pl.Int64, "type_id": pl.Int64, "alias": pl.Int64},
         )
-        new_df = pl.DataFrame(
-            {"tag": ["witch"], "format_id": [1], "type_id": [4], "alias": [0]}
-        )
+        new_df = pl.DataFrame({"tag": ["witch"], "format_id": [1], "type_id": [4], "alias": [0]})
 
         conflicts = detect_conflicts(existing_df, new_df)
 

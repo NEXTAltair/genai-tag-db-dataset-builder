@@ -1,4 +1,4 @@
-"""Unit tests for database optimization."""
+"""database.py のユニットテスト（作成・インデックス・最適化）."""
 
 import sqlite3
 from pathlib import Path
@@ -120,9 +120,7 @@ class TestBuildIndexes:
 
         # インデックスが作成されたことを確認
         conn = sqlite3.connect(db_path)
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%';"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%';")
         indexes = [row[0] for row in cursor.fetchall()]
         conn.close()
 

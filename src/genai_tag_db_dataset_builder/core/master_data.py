@@ -1,7 +1,6 @@
-"""Master data initialization.
+"""マスタデータ初期化.
 
-This module provides master data initialization for TAG_FORMATS, TAG_TYPE_NAME,
-and TAG_TYPE_FORMAT_MAPPING tables.
+TAG_FORMATS / TAG_TYPE_NAME / TAG_TYPE_FORMAT_MAPPING の初期データを投入します。
 """
 
 from __future__ import annotations
@@ -13,16 +12,16 @@ from loguru import logger
 
 
 def initialize_master_data(db_path: Path | str) -> None:
-    """マスタデータを初期化.
+    """マスタデータを初期化する.
 
     Args:
         db_path: データベースファイルパス
 
     Note:
-        以下のマスタテーブルを初期化します:
-        - TAG_FORMATS (4レコード)
-        - TAG_TYPE_NAME (17レコード)
-        - TAG_TYPE_FORMAT_MAPPING (25レコード: Danbooru 5 + E621 8 + Derpibooru 12)
+        初回のみ、以下のマスタテーブルを初期化します。
+        - TAG_FORMATS（4レコード）
+        - TAG_TYPE_NAME（17レコード）
+        - TAG_TYPE_FORMAT_MAPPING（25レコード: Danbooru 5 + E621 8 + Derpibooru 12）
     """
     db_path = Path(db_path)
 
@@ -33,9 +32,8 @@ def initialize_master_data(db_path: Path | str) -> None:
     logger.info(f"Initializing master data: {db_path}")
 
     conn = sqlite3.connect(db_path)
-
     try:
-        # TAG_FORMATS初期化
+        # TAG_FORMATS 初期化
         logger.info("Initializing TAG_FORMATS...")
         conn.executemany(
             "INSERT OR IGNORE INTO TAG_FORMATS (format_id, format_name, description) VALUES (?, ?, ?)",
@@ -47,7 +45,7 @@ def initialize_master_data(db_path: Path | str) -> None:
             ],
         )
 
-        # TAG_TYPE_NAME初期化
+        # TAG_TYPE_NAME 初期化
         logger.info("Initializing TAG_TYPE_NAME...")
         conn.executemany(
             "INSERT OR IGNORE INTO TAG_TYPE_NAME (type_name_id, type_name, description) VALUES (?, ?, ?)",
@@ -72,16 +70,16 @@ def initialize_master_data(db_path: Path | str) -> None:
             ],
         )
 
-        # TAG_TYPE_FORMAT_MAPPING初期化
+        # TAG_TYPE_FORMAT_MAPPING 初期化
         logger.info("Initializing TAG_TYPE_FORMAT_MAPPING...")
 
         # Danbooru (format_id=1)
         danbooru_mappings = [
-            (1, 0, 1, "general"),  # type_id 0 → general
-            (1, 1, 2, "artist"),  # type_id 1 → artist
-            (1, 3, 3, "copyright"),  # type_id 3 → copyright
-            (1, 4, 4, "character"),  # type_id 4 → character
-            (1, 5, 7, "meta"),  # type_id 5 → meta
+            (1, 0, 1, "general"),
+            (1, 1, 2, "artist"),
+            (1, 3, 3, "copyright"),
+            (1, 4, 4, "character"),
+            (1, 5, 7, "meta"),
         ]
 
         # E621 (format_id=2)

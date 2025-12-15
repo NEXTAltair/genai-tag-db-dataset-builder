@@ -1,1 +1,1 @@
-"""Utility functions for tag database building."""
+"""タグDB構築用のユーティリティ群."""

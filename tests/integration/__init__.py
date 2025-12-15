@@ -1,1 +1,1 @@
-"""Integration tests."""
+"""統合テスト."""
