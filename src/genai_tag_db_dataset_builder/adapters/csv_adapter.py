@@ -98,25 +98,37 @@ class CSV_Adapter(BaseAdapter):
 
             # NORMALIZED/UNKNOWN判定時のスキップ処理（overridesがない場合のみ）
             if decision in (TagColumnType.NORMALIZED, TagColumnType.UNKNOWN) and not override_type:
-                # UNKNOWN の場合はレポート出力
-                if decision == TagColumnType.UNKNOWN and self.unknown_report_dir:
-                    self._export_unknown_column_report(
-                        source_path=self.file_path,
-                        column_name="tag",
+                # dataset_rising_v2 は「正則化済み tag + deprecated_tags」の辞書で、source_tag が無い。
+                # この場合に限り、tag を source_tag として扱って取り込みを継続する。
+                if (
+                    decision == TagColumnType.NORMALIZED
+                    and self.repair_mode == "dataset_rising_v2"
+                    and "deprecated_tags" in df.columns
+                ):
+                    logger.warning(
+                        f"{self.file_path}: tag列はNORMALIZED推定だが、dataset_rising_v2として取り込みを継続します。"
+                        "（tag列を source_tag として扱い、deprecated_tags で alias 情報を取り込む）"
+                    )
+                else:
+                    # UNKNOWN の場合はレポート出力
+                    if decision == TagColumnType.UNKNOWN and self.unknown_report_dir:
+                        self._export_unknown_column_report(
+                            source_path=self.file_path,
+                            column_name="tag",
+                            signals=signals,
+                        )
+
+                    logger.error(
+                        f"取り込みスキップ: {self.file_path} (decision={decision.value}). "
+                        "取り込み対象は SOURCE のみです。"
+                        "なお、丸括弧エスケープ（`\\(` `\\)`）は正則化後に付与されるため NORMALIZED の強いシグナルです。"
+                        f" 根拠: {signals}"
+                    )
+                    raise NormalizedSourceSkipError(
+                        file_path=str(self.file_path),
+                        decision=decision.value,
                         signals=signals,
                     )
-
-                logger.error(
-                    f"取り込みスキップ: {self.file_path} (decision={decision.value}). "
-                    "取り込み対象は SOURCE のみです。"
-                    "なお、丸括弧エスケープ（`\\(` `\\)`）は正則化後に付与されるため NORMALIZED の強いシグナルです。"
-                    f" 根拠: {signals}"
-                )
-                raise NormalizedSourceSkipError(
-                    file_path=str(self.file_path),
-                    decision=decision.value,
-                    signals=signals,
-                )
 
             df = df.rename({"tag": "source_tag"})
             logger.debug(

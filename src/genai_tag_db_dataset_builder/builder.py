@@ -191,6 +191,9 @@ def _iter_csv_files(root: Path) -> list[Path]:
 
 def _infer_format_id(path: Path) -> int:
     name = path.name.lower()
+    # e621-rising v2 datasets (tag + deprecated_tags) are derived from e621.
+    if "dataset_rising_v2" in name or "rising_v2" in name:
+        return 2
     if "danbooru" in name:
         return 1
     if "e621" in name:
@@ -583,8 +586,18 @@ def build_dataset(
         # Phase 1: tags_v4.db からベースデータを取り込み
         tags_v4_path = _first_existing_path(
             [
+                # 旧: ルート直下
                 sources_dir / "tags_v4.db",
+                # 旧: CSVディレクトリ配下
                 sources_dir / "TagDB_DataSource_CSV" / "tags_v4.db",
+                # 現: genai-tag-db-tools の同梱DB（LoRAIro前提）
+                sources_dir
+                / "local_packages"
+                / "genai-tag-db-tools"
+                / "src"
+                / "genai_tag_db_tools"
+                / "data"
+                / "tags_v4.db",
             ]
         )
         if tags_v4_path:
@@ -625,7 +638,7 @@ def build_dataset(
             # TAG_TRANSLATIONS 登録
             for row in df_translations.to_dicts():
                 conn.execute(
-                    "INSERT INTO TAG_TRANSLATIONS (translation_id, tag_id, language, translation, created_at, updated_at) "
+                    "INSERT OR IGNORE INTO TAG_TRANSLATIONS (translation_id, tag_id, language, translation, created_at, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         row["translation_id"],
@@ -677,8 +690,15 @@ def build_dataset(
 
                 # translation source 検出（language列の存在チェック）
                 try:
-                    adapter = CSV_Adapter(csv_path, overrides=overrides)
-                    df = adapter.read()
+                    unknown_dir = report_dir_path / "unknown" if report_dir_path else Path("reports/dataset_builder/unknown")
+                    df = _read_csv_best_effort(
+                        csv_path,
+                        unknown_report_dir=unknown_dir,
+                        overrides=overrides,
+                    )
+                    if df is None:
+                        skipped.append((source_name, "read_failed"))
+                        continue
                 except NormalizedSourceSkipError as e:
                     # NORMALIZED/UNKNOWN判定でスキップ
                     skipped.append((source_name, f"{e.decision}_skipped"))
@@ -689,11 +709,10 @@ def build_dataset(
                     logger.error(f"Failed to read CSV: {csv_path} ({e})")
                     continue
 
-                if not adapter.validate(df):
+                # 最低限の整合性チェック
+                if "source_tag" not in df.columns:
                     skipped.append((source_name, "validation_failed"))
                     continue
-
-                df = adapter.repair(df)
 
                 # Translation source 処理（language列または言語別列を持つ場合）
                 lang_columns = {col.lower() for col in df.columns} & {"language", "japanese", "english", "chinese", "korean", "ja", "en", "zh", "ko"}
@@ -767,6 +786,7 @@ def build_dataset(
                     # 2) TAG_STATUS / TAG_USAGE
                     st_rows: list[tuple[int, int, int, int, int]] = []
                     usage_rows: list[tuple[int, int, int]] = []
+                    logged_invalid_count = False
 
                     source_tags = chunk["source_tag"].to_list()
                     deprecated_list = chunk["deprecated_tags"].to_list()
@@ -799,7 +819,17 @@ def build_dataset(
 
                         # usage (canonical のみ)
                         if cnt is not None:
-                            usage_rows.append((canonical_tag_id, fmt_i, int(cnt)))
+                            try:
+                                count_i = int(cnt)
+                            except (TypeError, ValueError):
+                                if not logged_invalid_count:
+                                    logger.warning(
+                                        f"{source_name}: invalid count value encountered: {cnt!r} "
+                                        "(skipping count rows for this source)"
+                                    )
+                                    logged_invalid_count = True
+                                continue
+                            usage_rows.append((canonical_tag_id, fmt_i, count_i))
 
                     if st_rows:
                         conn.executemany(

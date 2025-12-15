@@ -130,6 +130,11 @@ def process_deprecated_tags(
             alias_tag = normalize_tag(alias_source_tag.strip())
             if alias_tag in tags_mapping:
                 alias_tag_id = tags_mapping[alias_tag]
+                if alias_tag_id == canonical_tag_id:
+                    # deprecated_tags に canonical 自身が混ざっている場合がある。
+                    # TAG_STATUS は (tag_id, format_id) が主キーなので、ここで上書きされると
+                    # alias=1 & preferred_tag_id==tag_id となり CHECK 制約に違反するため除外する。
+                    continue
                 records.append(
                     {
                         "tag_id": alias_tag_id,

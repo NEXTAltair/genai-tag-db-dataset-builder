@@ -114,6 +114,21 @@ class TestCSVAdapter:
         assert "source_tag" in df.columns
         assert df["source_tag"].to_list() == ["witch hat", "mage staff"]
 
+    def test_dataset_rising_v2_normalized_is_allowed(self, tmp_path: Path) -> None:
+        """dataset_rising_v2 は正則化済み tag でも deprecated_tags 取り込みのため許可する."""
+        csv_path = tmp_path / "dataset_rising_v2.csv"
+        csv_path.write_text(
+            "tag,deprecated_tags,format_id\n"
+            '1 eye,"one-eyed, single eye",\n'
+            '2 tails,"two tails",\n',
+            encoding="utf-8",
+        )
+        adapter = CSV_Adapter(csv_path, repair_mode="dataset_rising_v2")
+        df = adapter.read()
+        assert "source_tag" in df.columns
+        assert df["source_tag"].to_list() == ["1 eye", "2 tails"]
+        assert "deprecated_tags" in df.columns
+
     def test_unknown_source_with_override_does_not_skip(self, tmp_path: Path) -> None:
         """Override設定でUNKNOWN判定をバイパスできる."""
         csv_path = tmp_path / "unknown.csv"
@@ -134,4 +149,3 @@ class TestCSVAdapter:
             adapter.read()
         # レポートが出力されている
         assert any(report_dir.glob("*__unknown_tag.tsv"))
-

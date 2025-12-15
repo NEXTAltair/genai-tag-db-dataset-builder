@@ -118,6 +118,16 @@ class TestProcessDeprecatedTags:
         # canonicalのみ（nonexistentはtags_mappingに無いのでスキップ）
         assert len(records) == 1
 
+    def test_skips_self_alias(self) -> None:
+        """deprecated_tags に canonical 自身が含まれていても CHECK 制約違反にならないよう除外する."""
+        tags_mapping = {"witch": 1}
+        records = process_deprecated_tags("witch", "witch", 1, tags_mapping)
+
+        assert len(records) == 1
+        assert records[0]["tag_id"] == 1
+        assert records[0]["alias"] == 0
+        assert records[0]["preferred_tag_id"] == 1
+
     def test_process_deprecated_tags_logs_missing_aliases(self) -> None:
         """存在しないaliasがある場合にWARNINGログを出力することを確認."""
         from unittest.mock import patch
