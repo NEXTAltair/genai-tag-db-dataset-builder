@@ -572,8 +572,12 @@ def build_dataset(
     skipped: list[tuple[str, str]] = []
 
     # tags_v4.db 側の不整合（TAG_STATUS が存在しない tag_id / preferred_tag_id を参照）を
-    # ビルド側で最低限救済するためのレポート（tag_id, placeholder_tag, kind）。
-    created_missing_tags: list[tuple[str, int, str]] = []
+    # ビルド側で最低限救済するためのレポート。
+    #
+    # NOTE:
+    # - 欠損 tag_id 自体は「連番の抜け」であり得るが、TAG_STATUS 側が参照している場合は実害がある
+    # - ここでは placeholder の TAGS 行を作って外部キー整合性を保ち、あとで手動修正できるように情報を残す
+    created_missing_tags: list[dict[str, object]] = []
 
     # Phase 0: DB 作成・マスターデータ登録
     logger.info(f"[Phase 0] Creating database: {output_path}")
@@ -621,14 +625,55 @@ def build_dataset(
             tags_v4_tag_ids = set(df_tags["tag_id"].to_list())
             status_tag_ids = set(df_status["tag_id"].to_list())
             status_preferred_ids = set(df_status["preferred_tag_id"].to_list())
-            missing_ids = sorted((status_tag_ids | status_preferred_ids) - tags_v4_tag_ids)
+            missing_tag_ids = sorted(status_tag_ids - tags_v4_tag_ids)
+            missing_preferred_ids = sorted(status_preferred_ids - tags_v4_tag_ids)
+            missing_ids = sorted(set(missing_tag_ids) | set(missing_preferred_ids))
+
+            # tag_id -> tag を tags_v4 の TAGS から引ける範囲で保持（レポート用）
+            tags_v4_id_to_tag: dict[int, str] = dict(
+                zip(df_tags["tag_id"].to_list(), df_tags["tag"].to_list())
+            )
+
             for missing_id in missing_ids:
                 placeholder_tag = f"__missing_tag_id_{missing_id}__"
                 conn.execute(
                     "INSERT OR IGNORE INTO TAGS (tag_id, tag, source_tag) VALUES (?, ?, ?)",
                     (missing_id, placeholder_tag, placeholder_tag),
                 )
-                created_missing_tags.append(("missing_tag_id_or_preferred", int(missing_id), placeholder_tag))
+
+            # 手動修正用の詳細レポート（TAG_STATUSの参照元も含める）
+            if missing_ids:
+                missing_set = set(missing_ids)
+                for row in df_status.to_dicts():
+                    tag_id = int(row["tag_id"])
+                    preferred_tag_id = int(row["preferred_tag_id"])
+
+                    referenced_as: str | None = None
+                    missing_id: int | None = None
+                    if tag_id in missing_set:
+                        referenced_as = "tag_id"
+                        missing_id = tag_id
+                    elif preferred_tag_id in missing_set:
+                        referenced_as = "preferred_tag_id"
+                        missing_id = preferred_tag_id
+                    else:
+                        continue
+
+                    placeholder_tag = f"__missing_tag_id_{missing_id}__"
+                    created_missing_tags.append(
+                        {
+                            "referenced_as": referenced_as,
+                            "missing_id": missing_id,
+                            "format_id": int(row["format_id"]),
+                            "type_id": int(row["type_id"]),
+                            "alias": int(row["alias"]),
+                            "tag_id": tag_id,
+                            "preferred_tag_id": preferred_tag_id,
+                            "tag_if_exists": tags_v4_id_to_tag.get(tag_id, ""),
+                            "preferred_tag_if_exists": tags_v4_id_to_tag.get(preferred_tag_id, ""),
+                            "placeholder_tag": placeholder_tag,
+                        }
+                    )
 
             # TAGS 登録
             existing_tags: set[str] = set()
@@ -899,8 +944,35 @@ def build_dataset(
             out_path = report_dir_path / "missing_tags_created.tsv"
             with open(out_path, "w", encoding="utf-8", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
-                writer.writerow(["kind", "tag_id", "placeholder_tag"])
-                writer.writerows(created_missing_tags)
+                writer.writerow(
+                    [
+                        "referenced_as",
+                        "missing_id",
+                        "format_id",
+                        "type_id",
+                        "alias",
+                        "tag_id",
+                        "preferred_tag_id",
+                        "tag_if_exists",
+                        "preferred_tag_if_exists",
+                        "placeholder_tag",
+                    ]
+                )
+                for r in created_missing_tags:
+                    writer.writerow(
+                        [
+                            r["referenced_as"],
+                            r["missing_id"],
+                            r["format_id"],
+                            r["type_id"],
+                            r["alias"],
+                            r["tag_id"],
+                            r["preferred_tag_id"],
+                            r["tag_if_exists"],
+                            r["preferred_tag_if_exists"],
+                            r["placeholder_tag"],
+                        ]
+                    )
             logger.warning(f"Created missing TAGS rows report: {out_path} ({len(created_missing_tags)} rows)")
 
     finally:
