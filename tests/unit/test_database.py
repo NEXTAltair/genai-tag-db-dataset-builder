@@ -68,52 +68,7 @@ class TestBuildIndexes:
         """インデックス構築のテスト."""
         db_path = tmp_path / "test.db"
 
-        # データベース作成
-        conn = sqlite3.connect(db_path)
-        # テストテーブル作成（TAGS, TAG_STATUS, TAG_TRANSLATIONS, TAG_USAGE_COUNTS）
-        conn.execute(
-            """
-            CREATE TABLE TAGS (
-                tag_id INTEGER PRIMARY KEY,
-                tag TEXT NOT NULL UNIQUE,
-                source_tag TEXT NOT NULL
-            )
-        """
-        )
-        conn.execute(
-            """
-            CREATE TABLE TAG_STATUS (
-                tag_id INTEGER NOT NULL,
-                format_id INTEGER NOT NULL,
-                type_id INTEGER,
-                alias BOOLEAN NOT NULL,
-                preferred_tag_id INTEGER NOT NULL,
-                PRIMARY KEY (tag_id, format_id)
-            )
-        """
-        )
-        conn.execute(
-            """
-            CREATE TABLE TAG_TRANSLATIONS (
-                translation_id INTEGER PRIMARY KEY,
-                tag_id INTEGER NOT NULL,
-                language TEXT NOT NULL,
-                translation TEXT NOT NULL
-            )
-        """
-        )
-        conn.execute(
-            """
-            CREATE TABLE TAG_USAGE_COUNTS (
-                tag_id INTEGER NOT NULL,
-                format_id INTEGER NOT NULL,
-                count INTEGER NOT NULL,
-                PRIMARY KEY (tag_id, format_id)
-            )
-        """
-        )
-        conn.commit()
-        conn.close()
+        create_database(db_path)
 
         # インデックス構築
         build_indexes(db_path)
@@ -179,3 +134,71 @@ class TestPragmaSettings:
     def test_required_indexes_count(self) -> None:
         """必須インデックス数のテスト."""
         assert len(REQUIRED_INDEXES) == 8
+
+
+class TestSchemaCompatibility:
+    """create_database() のスキーマが期待どおりかを確認する。"""
+
+    def test_schema_matches_expected_columns(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test.db"
+        create_database(db_path)
+
+        # (name, type, not_null, pk)
+        expected: dict[str, list[tuple[str, str, bool, bool]]] = {
+            "TAGS": [
+                ("tag_id", "INTEGER", True, True),
+                ("source_tag", "TEXT", True, False),
+                ("tag", "TEXT", True, False),
+                ("created_at", "DATETIME", False, False),
+                ("updated_at", "DATETIME", False, False),
+            ],
+            "TAG_FORMATS": [
+                ("format_id", "INTEGER", True, True),
+                ("format_name", "TEXT", True, False),
+                ("description", "TEXT", False, False),
+            ],
+            "TAG_TYPE_NAME": [
+                ("type_name_id", "INTEGER", True, True),
+                ("type_name", "TEXT", True, False),
+                ("description", "TEXT", False, False),
+            ],
+            "TAG_TYPE_FORMAT_MAPPING": [
+                ("format_id", "INTEGER", True, True),
+                ("type_id", "INTEGER", True, True),
+                ("type_name_id", "INTEGER", True, False),
+                ("description", "TEXT", False, False),
+            ],
+            "TAG_STATUS": [
+                ("tag_id", "INTEGER", True, True),
+                ("format_id", "INTEGER", True, True),
+                ("type_id", "INTEGER", True, False),
+                ("alias", "BOOLEAN", True, False),
+                ("preferred_tag_id", "INTEGER", True, False),
+                ("created_at", "DATETIME", False, False),
+                ("updated_at", "DATETIME", False, False),
+            ],
+            "TAG_TRANSLATIONS": [
+                ("translation_id", "INTEGER", True, True),
+                ("tag_id", "INTEGER", True, False),
+                ("language", "TEXT", False, False),
+                ("translation", "TEXT", False, False),
+                ("created_at", "DATETIME", False, False),
+                ("updated_at", "DATETIME", False, False),
+            ],
+            "TAG_USAGE_COUNTS": [
+                ("tag_id", "INTEGER", True, True),
+                ("format_id", "INTEGER", True, True),
+                ("count", "INTEGER", True, False),
+                ("created_at", "DATETIME", False, False),
+                ("updated_at", "DATETIME", False, False),
+            ],
+        }
+
+        conn = sqlite3.connect(db_path)
+        try:
+            for table, expected_columns in expected.items():
+                rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
+                got = [(name, col_type.upper(), bool(notnull), bool(pk)) for _, name, col_type, notnull, _, pk in rows]
+                assert got == expected_columns
+        finally:
+            conn.close()

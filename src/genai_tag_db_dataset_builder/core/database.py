@@ -14,23 +14,47 @@ from pathlib import Path
 
 from loguru import logger
 
-# ビルド時PRAGMA（速度優先）
-BUILD_TIME_PRAGMAS = [
+# PRAGMA は「DBファイルに永続化されるもの」と「接続ごとの一時設定」が混在するため、
+# 意図が伝わるように分類して定義する。
+PERSISTENT_BUILD_PRAGMAS = [
     "PRAGMA journal_mode = OFF;",  # WALオフ（ビルド高速化）
     "PRAGMA synchronous = OFF;",  # 同期オフ（ビルド高速化）
+]
+CONNECTION_BUILD_PRAGMAS = [
     "PRAGMA cache_size = -128000;",  # 128MB cache
     "PRAGMA temp_store = MEMORY;",
     "PRAGMA locking_mode = EXCLUSIVE;",  # 排他ロック（単一プロセス）
 ]
 
-# 配布時PRAGMA（安全性・並行性優先）
-DISTRIBUTION_PRAGMAS = [
+PERSISTENT_DISTRIBUTION_PRAGMAS = [
     "PRAGMA journal_mode = WAL;",  # WAL有効（読み取り並行性）
     "PRAGMA synchronous = NORMAL;",
+]
+CONNECTION_DISTRIBUTION_PRAGMAS = [
     "PRAGMA cache_size = -64000;",  # 64MB cache
     "PRAGMA temp_store = MEMORY;",
     "PRAGMA mmap_size = 268435456;",  # 256MB mmap
 ]
+
+# 互換性のため、従来の定数名も維持する（内容は「永続 + 接続」の合成）。
+BUILD_TIME_PRAGMAS = [*PERSISTENT_BUILD_PRAGMAS, *CONNECTION_BUILD_PRAGMAS]
+DISTRIBUTION_PRAGMAS = [
+    *PERSISTENT_DISTRIBUTION_PRAGMAS,
+    *CONNECTION_DISTRIBUTION_PRAGMAS,
+]
+
+
+def apply_connection_pragmas(conn: sqlite3.Connection, *, profile: str) -> None:
+    """接続ごとに適用が必要な PRAGMA を設定する。"""
+    if profile == "build":
+        pragmas = CONNECTION_BUILD_PRAGMAS
+    elif profile == "distribution":
+        pragmas = CONNECTION_DISTRIBUTION_PRAGMAS
+    else:
+        raise ValueError(f"Unknown PRAGMA profile: {profile!r}")
+
+    for pragma in pragmas:
+        conn.execute(pragma)
 
 # 必須インデックス（想定クエリに基づく）
 REQUIRED_INDEXES = [

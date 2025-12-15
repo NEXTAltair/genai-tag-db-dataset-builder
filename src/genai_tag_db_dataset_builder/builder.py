@@ -19,7 +19,12 @@ import polars as pl
 
 from genai_tag_db_dataset_builder.adapters.csv_adapter import CSV_Adapter
 from genai_tag_db_dataset_builder.adapters.tags_v4_adapter import Tags_v4_Adapter
-from genai_tag_db_dataset_builder.core.database import build_indexes, create_database, optimize_database
+from genai_tag_db_dataset_builder.core.database import (
+    apply_connection_pragmas,
+    build_indexes,
+    create_database,
+    optimize_database,
+)
 from genai_tag_db_dataset_builder.core.exceptions import NormalizedSourceSkipError
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
@@ -589,6 +594,7 @@ def build_dataset(
     initialize_master_data(output_path)
 
     conn = sqlite3.connect(output_path)
+    apply_connection_pragmas(conn, profile="build")
     try:
 
         # Phase 1: tags_v4.db からベースデータを取り込み
@@ -925,6 +931,7 @@ def build_dataset(
 
         # 再接続してバージョン情報書き込み
         conn = sqlite3.connect(output_path)
+        apply_connection_pragmas(conn, profile="build")
         conn.execute("INSERT INTO DATABASE_METADATA (key, value) VALUES ('version', ?)", (version,))
         conn.commit()
 
