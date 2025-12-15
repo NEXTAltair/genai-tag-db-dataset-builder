@@ -532,6 +532,210 @@ def _write_skipped_tsv(path: Path, skipped: list[tuple[str, str]]) -> None:
             writer.writerow({"source": src, "reason": reason})
 
 
+def _repair_placeholder_tag_ids(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """tags_v4 由来の __missing_tag_id_*__ を既存の tag_id に付け替える。
+
+    方針:
+    - placeholder には元の文字列が無いため、TAG_STATUS の preferred_tag_id に寄せる以外の自動復元は不可。
+    - (preferred_tag_id, format_id) の TAG_STATUS が既に存在する場合は、placeholder 側の TAG_STATUS は削除する。
+    - preferred_tag_id == tag_id かつ alias=true のような破損行は削除する。
+    - 参照が無くなった placeholder TAGS 行は削除する。
+
+    Returns:
+        実行内容のレポート行（TSV出力用）。
+    """
+    repairs: list[dict[str, object]] = []
+
+    placeholder_rows = conn.execute(
+        "SELECT tag_id, tag FROM TAGS WHERE tag LIKE '__missing_tag_id_%__'"
+    ).fetchall()
+    if not placeholder_rows:
+        return repairs
+
+    for (missing_id, placeholder_tag) in placeholder_rows:
+        status_rows = conn.execute(
+            "SELECT format_id, type_id, alias, preferred_tag_id FROM TAG_STATUS WHERE tag_id = ?",
+            (missing_id,),
+        ).fetchall()
+
+        if not status_rows:
+            conn.execute("DELETE FROM TAGS WHERE tag_id = ?", (missing_id,))
+            repairs.append(
+                {
+                    "missing_id": int(missing_id),
+                    "action": "delete_placeholder_only",
+                    "format_id": "",
+                    "preferred_tag_id": "",
+                    "note": "No TAG_STATUS rows",
+                    "placeholder_tag": placeholder_tag,
+                }
+            )
+            continue
+
+        status_map: dict[int, int] = {}
+        for (format_id, type_id, alias, preferred_tag_id) in status_rows:
+            if int(preferred_tag_id) != int(missing_id):
+                status_map[int(format_id)] = int(preferred_tag_id)
+            if int(preferred_tag_id) == int(missing_id):
+                conn.execute(
+                    "DELETE FROM TAG_STATUS WHERE tag_id = ? AND format_id = ?",
+                    (missing_id, format_id),
+                )
+                repairs.append(
+                    {
+                        "missing_id": int(missing_id),
+                        "action": "delete_invalid_self_preferred",
+                        "format_id": int(format_id),
+                        "preferred_tag_id": int(preferred_tag_id),
+                        "note": "preferred_tag_id==tag_id (invalid for alias row)",
+                        "placeholder_tag": placeholder_tag,
+                    }
+                )
+                continue
+
+            exists = conn.execute(
+                "SELECT 1 FROM TAG_STATUS WHERE tag_id = ? AND format_id = ?",
+                (preferred_tag_id, format_id),
+            ).fetchone()
+            if exists:
+                conn.execute(
+                    "DELETE FROM TAG_STATUS WHERE tag_id = ? AND format_id = ?",
+                    (missing_id, format_id),
+                )
+                repairs.append(
+                    {
+                        "missing_id": int(missing_id),
+                        "action": "delete_redundant_status",
+                        "format_id": int(format_id),
+                        "preferred_tag_id": int(preferred_tag_id),
+                        "note": "Preferred tag already has TAG_STATUS for this format",
+                        "placeholder_tag": placeholder_tag,
+                    }
+                )
+            else:
+                conn.execute(
+                    "UPDATE TAG_STATUS SET tag_id = ?, alias = 0, preferred_tag_id = ? "
+                    "WHERE tag_id = ? AND format_id = ?",
+                    (preferred_tag_id, preferred_tag_id, missing_id, format_id),
+                )
+                repairs.append(
+                    {
+                        "missing_id": int(missing_id),
+                        "action": "reassign_status_to_preferred",
+                        "format_id": int(format_id),
+                        "preferred_tag_id": int(preferred_tag_id),
+                        "note": f"Adopted placeholder TAG_STATUS as canonical (type_id={int(type_id)})",
+                        "placeholder_tag": placeholder_tag,
+                    }
+                )
+
+        # TAG_USAGE_COUNTS は format_id があるので、TAG_STATUS の preferred_tag_id に寄せられる
+        usage_rows = conn.execute(
+            "SELECT format_id, count FROM TAG_USAGE_COUNTS WHERE tag_id = ?",
+            (missing_id,),
+        ).fetchall()
+        for (format_id, count) in usage_rows:
+            preferred = status_map.get(int(format_id))
+            if preferred is None or preferred == int(missing_id):
+                conn.execute(
+                    "DELETE FROM TAG_USAGE_COUNTS WHERE tag_id = ? AND format_id = ?",
+                    (missing_id, format_id),
+                )
+                repairs.append(
+                    {
+                        "missing_id": int(missing_id),
+                        "action": "delete_usage_count_unmappable",
+                        "format_id": int(format_id),
+                        "preferred_tag_id": preferred if preferred is not None else "",
+                        "note": "No usable preferred_tag_id for this format",
+                        "placeholder_tag": placeholder_tag,
+                    }
+                )
+                continue
+
+            conn.execute(
+                "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count) VALUES (?, ?, ?) "
+                "ON CONFLICT(tag_id, format_id) DO UPDATE SET count = MAX(count, excluded.count)",
+                (preferred, int(format_id), int(count)),
+            )
+            conn.execute(
+                "DELETE FROM TAG_USAGE_COUNTS WHERE tag_id = ? AND format_id = ?",
+                (missing_id, format_id),
+            )
+            repairs.append(
+                {
+                    "missing_id": int(missing_id),
+                    "action": "move_usage_count_to_preferred",
+                    "format_id": int(format_id),
+                    "preferred_tag_id": int(preferred),
+                    "note": "Moved TAG_USAGE_COUNTS row to preferred tag_id",
+                    "placeholder_tag": placeholder_tag,
+                }
+            )
+
+        extra_translation = conn.execute(
+            "SELECT COUNT(*) FROM TAG_TRANSLATIONS WHERE tag_id = ?",
+            (missing_id,),
+        ).fetchone()[0]
+        if extra_translation:
+            repairs.append(
+                {
+                    "missing_id": int(missing_id),
+                    "action": "has_extra_rows_needs_manual",
+                    "format_id": "",
+                    "preferred_tag_id": "",
+                    "note": f"TAG_TRANSLATIONS={int(extra_translation)}",
+                    "placeholder_tag": placeholder_tag,
+                }
+            )
+
+        refs = conn.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM TAG_STATUS WHERE tag_id = ? OR preferred_tag_id = ?) +
+                (SELECT COUNT(*) FROM TAG_TRANSLATIONS WHERE tag_id = ?) +
+                (SELECT COUNT(*) FROM TAG_USAGE_COUNTS WHERE tag_id = ?)
+            """,
+            (missing_id, missing_id, missing_id, missing_id),
+        ).fetchone()[0]
+        if int(refs) == 0:
+            conn.execute("DELETE FROM TAGS WHERE tag_id = ?", (missing_id,))
+            repairs.append(
+                {
+                    "missing_id": int(missing_id),
+                    "action": "delete_placeholder_after_repair",
+                    "format_id": "",
+                    "preferred_tag_id": "",
+                    "note": "No remaining references",
+                    "placeholder_tag": placeholder_tag,
+                }
+            )
+
+    return repairs
+
+
+def _write_placeholder_repairs_tsv(report_dir: Path, repairs: list[dict[str, object]]) -> None:
+    if not repairs:
+        return
+
+    out_path = report_dir / "placeholder_tag_id_repairs.tsv"
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["missing_id", "action", "format_id", "preferred_tag_id", "note", "placeholder_tag"])
+        for r in repairs:
+            writer.writerow(
+                [
+                    r["missing_id"],
+                    r["action"],
+                    r["format_id"],
+                    r["preferred_tag_id"],
+                    r["note"],
+                    r["placeholder_tag"],
+                ]
+            )
+    logger.warning(f"Placeholder tag_id repairs report: {out_path} ({len(repairs)} rows)")
+
+
 def build_dataset(
     output_path: Path | str,
     sources_dir: Path | str,
@@ -583,6 +787,7 @@ def build_dataset(
     # - 欠損 tag_id 自体は「連番の抜け」であり得るが、TAG_STATUS 側が参照している場合は実害がある
     # - ここでは placeholder の TAGS 行を作って外部キー整合性を保ち、あとで手動修正できるように情報を残す
     created_missing_tags: list[dict[str, object]] = []
+    placeholder_repairs: list[dict[str, object]] = []
 
     # Phase 0: DB 作成・マスターデータ登録
     logger.info(f"[Phase 0] Creating database: {output_path}")
@@ -932,6 +1137,7 @@ def build_dataset(
         # 再接続してバージョン情報書き込み
         conn = sqlite3.connect(output_path)
         apply_connection_pragmas(conn, profile="build")
+        placeholder_repairs = _repair_placeholder_tag_ids(conn)
         conn.execute("INSERT INTO DATABASE_METADATA (key, value) VALUES ('version', ?)", (version,))
         conn.commit()
 
@@ -981,6 +1187,9 @@ def build_dataset(
                         ]
                     )
             logger.warning(f"Created missing TAGS rows report: {out_path} ({len(created_missing_tags)} rows)")
+
+        if report_dir_path:
+            _write_placeholder_repairs_tsv(report_dir_path, placeholder_repairs)
 
     finally:
         conn.close()
