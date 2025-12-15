@@ -571,6 +571,10 @@ def build_dataset(
     # スキップされたソースのレポート（ソース名, 理由）
     skipped: list[tuple[str, str]] = []
 
+    # tags_v4.db 側の不整合（TAG_STATUS が存在しない tag_id / preferred_tag_id を参照）を
+    # ビルド側で最低限救済するためのレポート（tag_id, placeholder_tag, kind）。
+    created_missing_tags: list[tuple[str, int, str]] = []
+
     # Phase 0: DB 作成・マスターデータ登録
     logger.info(f"[Phase 0] Creating database: {output_path}")
     if output_path.exists():
@@ -609,6 +613,22 @@ def build_dataset(
             df_status = tables["tag_status"]
             df_translations = tables["tag_translations"]
             df_usage = tables["tag_usage_counts"]
+
+            # tags_v4.db 側の不整合救済:
+            # TAG_STATUS が参照する tag_id / preferred_tag_id が TAGS に存在しない場合がある。
+            # 新DB側では外部キー整合性を維持したいので、placeholder TAGS 行を作成して挿入する。
+            # ※ ここで作る tag/source_tag は手動修正用のダミー。
+            tags_v4_tag_ids = set(df_tags["tag_id"].to_list())
+            status_tag_ids = set(df_status["tag_id"].to_list())
+            status_preferred_ids = set(df_status["preferred_tag_id"].to_list())
+            missing_ids = sorted((status_tag_ids | status_preferred_ids) - tags_v4_tag_ids)
+            for missing_id in missing_ids:
+                placeholder_tag = f"__missing_tag_id_{missing_id}__"
+                conn.execute(
+                    "INSERT OR IGNORE INTO TAGS (tag_id, tag, source_tag) VALUES (?, ?, ?)",
+                    (missing_id, placeholder_tag, placeholder_tag),
+                )
+                created_missing_tags.append(("missing_tag_id_or_preferred", int(missing_id), placeholder_tag))
 
             # TAGS 登録
             existing_tags: set[str] = set()
@@ -873,6 +893,15 @@ def build_dataset(
                 writer.writerow(["source", "reason"])
                 writer.writerows(skipped)
             logger.info(f"Skipped sources report: {skipped_report} ({len(skipped)} sources)")
+
+        # tags_v4 の不整合救済レポート出力（手動修正用）
+        if created_missing_tags and report_dir_path:
+            out_path = report_dir_path / "missing_tags_created.tsv"
+            with open(out_path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f, delimiter="\t")
+                writer.writerow(["kind", "tag_id", "placeholder_tag"])
+                writer.writerows(created_missing_tags)
+            logger.warning(f"Created missing TAGS rows report: {out_path} ({len(created_missing_tags)} rows)")
 
     finally:
         conn.close()
