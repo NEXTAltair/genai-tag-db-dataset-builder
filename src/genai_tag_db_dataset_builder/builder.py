@@ -1099,6 +1099,66 @@ def _write_tag_status_conflicts_tsv(
     )
 
 
+def _repair_missing_type_format_mapping(
+    conn: sqlite3.Connection, *, report_dir: Path | None = None
+) -> None:
+    """TAG_STATUS の (format_id, type_id) が TAG_TYPE_FORMAT_MAPPING に存在しない場合を救済する.
+
+    外部キー制約の整合性を満たすために、未知の組み合わせを TAG_TYPE_FORMAT_MAPPING に追加する。
+    - type_id が TAG_TYPE_NAME に存在する（0..16）場合は「同じID」を type_name_id として採用
+    - それ以外は unknown(0) にフォールバック
+    """
+    cur = conn.execute("SELECT MAX(type_name_id) FROM TAG_TYPE_NAME")
+    max_type_name_id = cur.fetchone()[0] or 0
+
+    missing = conn.execute(
+        """
+        SELECT
+            ts.format_id,
+            ts.type_id,
+            COUNT(*) AS rows
+        FROM TAG_STATUS ts
+        LEFT JOIN TAG_TYPE_FORMAT_MAPPING m
+            ON m.format_id = ts.format_id
+            AND m.type_id = ts.type_id
+        WHERE m.format_id IS NULL
+        GROUP BY ts.format_id, ts.type_id
+        ORDER BY rows DESC, ts.format_id, ts.type_id
+        """
+    ).fetchall()
+
+    if not missing:
+        return
+
+    repairs: list[tuple[int, int, int, int, str]] = []
+    for format_id, type_id, rows in missing:
+        if 0 <= int(type_id) <= int(max_type_name_id):
+            type_name_id = int(type_id)
+            reason = "type_id_as_type_name_id"
+        else:
+            type_name_id = 0
+            reason = "fallback_unknown"
+
+        conn.execute(
+            "INSERT OR IGNORE INTO TAG_TYPE_FORMAT_MAPPING (format_id, type_id, type_name_id, description) VALUES (?, ?, ?, ?)",
+            (int(format_id), int(type_id), int(type_name_id), f"auto-added ({reason})"),
+        )
+        repairs.append((int(format_id), int(type_id), int(type_name_id), int(rows), reason))
+
+    conn.commit()
+
+    if report_dir is None:
+        return
+
+    report_dir.mkdir(parents=True, exist_ok=True)
+    out_path = report_dir / "missing_type_format_mapping_repairs.tsv"
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["format_id", "type_id", "type_name_id", "rows", "reason"])
+        writer.writerows(repairs)
+    logger.warning(f"Missing type/format mapping repairs report: {out_path} ({len(repairs)} pairs)")
+
+
 def build_dataset(
     output_path: Path | str,
     sources_dir: Path | str,
@@ -1496,6 +1556,9 @@ def build_dataset(
                         conn.commit()
 
                 logger.info(f"Imported CSV: {source_name} ({len(df)} rows)")
+
+        # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
+        _repair_missing_type_format_mapping(conn, report_dir=report_dir_path if report_dir_path else None)
 
         # Phase 3: インデックス作成
         logger.info("[Phase 3] Creating indexes")
