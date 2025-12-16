@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -224,6 +225,7 @@ def _read_csv_best_effort(
     *,
     unknown_report_dir: Path,
     overrides: ColumnTypeOverrides | None = None,
+    bad_utf8_report_dir: Path | None = None,
 ) -> pl.DataFrame | None:
     """CSVを可能な限り読み込む（ヘッダー無しCSVも最低限扱う）."""
     try:
@@ -253,8 +255,19 @@ def _read_csv_best_effort(
             truncate_ragged_lines=True,
         )
     except Exception as e:
-        logger.warning(f"CSV fallback read failed: {path} ({e})")
-        return None
+        msg = str(e).lower()
+        if ("utf-8" in msg or "unicode" in msg) and bad_utf8_report_dir is not None:
+            raw = _read_csv_skip_invalid_utf8_lines(
+                path,
+                has_header=False,
+                report_dir=bad_utf8_report_dir,
+            )
+            if raw is None:
+                logger.warning(f"CSV fallback read failed: {path} ({e})")
+                return None
+        else:
+            logger.warning(f"CSV fallback read failed: {path} ({e})")
+            return None
 
     if len(raw.columns) < 1:
         return None
@@ -263,6 +276,60 @@ def _read_csv_best_effort(
     if len(raw.columns) >= 2:
         df = df.rename({raw.columns[1]: "count"})
     return df
+
+
+def _read_csv_skip_invalid_utf8_lines(
+    path: Path,
+    *,
+    has_header: bool,
+    report_dir: Path,
+) -> pl.DataFrame | None:
+    """UTF-8 が「一部行だけ」壊れているCSVを救済する.
+
+    - ファイルをバイト列で行読みし、UTF-8 厳密デコードできない行だけスキップする
+    - それ以外の行で Polars 読み込みを再実行する
+    - スキップした行はTSVに記録する（後から手動で直せるように）
+    """
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "csv_invalid_utf8_lines.tsv"
+
+    kept_lines: list[str] = []
+    bad_rows: list[tuple[int, str, str]] = []
+
+    with open(path, "rb") as f:
+        for line_no, bline in enumerate(f, start=1):
+            try:
+                kept_lines.append(bline.decode("utf-8"))
+            except UnicodeDecodeError as e:
+                preview = bline.decode("utf-8", errors="replace").strip()
+                preview = preview.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+                bad_rows.append((line_no, str(e), preview))
+
+    if not kept_lines:
+        return None
+
+    if bad_rows:
+        is_new = not report_path.exists()
+        with open(report_path, "a", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f, delimiter="\t")
+            if is_new:
+                writer.writerow(["source_file", "line_no", "error", "preview"])
+            for line_no, err, preview in bad_rows:
+                writer.writerow([str(path), line_no, err, preview])
+
+        logger.warning(f"Skipped {len(bad_rows)} invalid-utf8 lines: {path} -> {report_path}")
+
+    text = "".join(kept_lines)
+    try:
+        return pl.read_csv(
+            io.StringIO(text),
+            has_header=has_header,
+            ignore_errors=True,
+            truncate_ragged_lines=True,
+        )
+    except Exception as e:
+        logger.warning(f"CSV salvage read failed: {path} ({e})")
+        return None
 
 
 def _ensure_temp_tables(conn: sqlite3.Connection) -> None:
@@ -1275,6 +1342,7 @@ def build_dataset(
                         csv_path,
                         unknown_report_dir=unknown_dir,
                         overrides=overrides,
+                        bad_utf8_report_dir=report_dir_path,
                     )
                     if df is None:
                         skipped.append((source_name, "read_failed"))
@@ -1447,8 +1515,8 @@ def build_dataset(
 
         logger.info(f"[COMPLETE] Dataset built successfully: {output_path}")
 
-        # スキップレポート出力
-        if skipped and report_dir_path:
+        # スキップレポート出力（前回実行分が残ると紛らわしいので、常に上書きする）
+        if report_dir_path:
             skipped_report = report_dir_path / "skipped_sources.tsv"
             with open(skipped_report, "w", encoding="utf-8", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
