@@ -11,15 +11,17 @@ import argparse
 import csv
 import io
 import logging
+import re
 import sqlite3
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Iterable, Iterator
 
 import polars as pl
 
 from genai_tag_db_dataset_builder.adapters.csv_adapter import CSV_Adapter
+from genai_tag_db_dataset_builder.adapters.hf_translation_adapter import P1atdevDanbooruJaTagPairAdapter
 from genai_tag_db_dataset_builder.adapters.tags_v4_adapter import Tags_v4_Adapter
 from genai_tag_db_dataset_builder.core.database import (
     apply_connection_pragmas,
@@ -145,11 +147,11 @@ def _infer_language_code(column_name: str) -> str:
         言語コード（例: "ja", "en"）
     """
     col_lower = column_name.lower()
-    
+
     # 直接言語コードの場合
     if col_lower in {"ja", "en", "zh", "ko", "fr", "de", "es", "ru"}:
         return col_lower
-    
+
     # 言語名からコードに変換
     lang_map = {
         "japanese": "ja",
@@ -161,7 +163,7 @@ def _infer_language_code(column_name: str) -> str:
         "spanish": "es",
         "russian": "ru",
     }
-    
+
     return lang_map.get(col_lower, col_lower[:2])  # デフォルトは先頭2文字
 
 
@@ -269,6 +271,77 @@ def _should_include_source(
         if _match_source(source_name, exact=exclude_exact, patterns=exclude_patterns):
             return False
     return True
+
+
+def _infer_source_timestamp_utc_midnight(path: Path) -> str | None:
+    """ファイル名から日付を推定し、UTCの 00:00:00 に固定したタイムスタンプ文字列を返す.
+
+    対応例:
+      - danbooru_241016.csv -> 2024-10-16 00:00:00+00:00
+      - danbooru_20241016.csv -> 2024-10-16 00:00:00+00:00
+    """
+    name = path.name.lower()
+    m8 = re.search(r"_(\d{8})(?:\D|$)", name)
+    if m8:
+        ymd = m8.group(1)
+        yyyy, mm, dd = int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8])
+        return f"{yyyy:04d}-{mm:02d}-{dd:02d} 00:00:00+00:00"
+
+    m6 = re.search(r"_(\d{6})(?:\D|$)", name)
+    if m6:
+        ymd = m6.group(1)
+        yy, mm, dd = int(ymd[:2]), int(ymd[2:4]), int(ymd[4:6])
+        yyyy = 2000 + yy
+        return f"{yyyy:04d}-{mm:02d}-{dd:02d} 00:00:00+00:00"
+
+    return None
+
+
+def _is_authoritative_count_source(path: Path) -> bool:
+    """最新スナップショットとして count を上書きするソースかどうか."""
+    name = path.name.lower()
+    return bool(re.search(r"^danbooru_\d{6,8}\.csv$", name))
+
+
+def _select_latest_count_snapshot(paths: list[Path]) -> tuple[Path, str] | None:
+    """count の最新スナップショット（現状は Danbooru）を選ぶ.
+
+    返り値: (path, timestamp_utc_midnight)
+    """
+    candidates: list[tuple[str, Path]] = []
+    for p in paths:
+        if not _is_authoritative_count_source(p):
+            continue
+        ts = _infer_source_timestamp_utc_midnight(p)
+        if ts is None:
+            continue
+        candidates.append((ts, p))
+    if not candidates:
+        return None
+
+    # ts は "YYYY-MM-DD ..." なので文字列比較でも時系列順になる
+    ts, p = max(candidates, key=lambda x: x[0])
+    return p, ts
+
+
+def _replace_usage_counts_for_format(
+    conn: sqlite3.Connection,
+    *,
+    format_id: int,
+    counts_by_tag_id: dict[int, int],
+    timestamp: str,
+) -> None:
+    """TAG_USAGE_COUNTS の特定 format_id をスナップショットで置換する.
+
+    注意: これは TAGS/TAG_STATUS を削除しない。削除するのは TAG_USAGE_COUNTS の当該 format_id 行のみ。
+    """
+    conn.execute("DELETE FROM TAG_USAGE_COUNTS WHERE format_id = ?", (format_id,))
+    rows = [(tag_id, format_id, count, timestamp, timestamp) for tag_id, count in counts_by_tag_id.items()]
+    conn.executemany(
+        "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
 
 
 def _read_csv_best_effort(
@@ -1238,6 +1311,252 @@ def _repair_missing_type_format_mapping(
     logger.warning(f"Missing type/format mapping repairs report: {out_path} ({len(repairs)} pairs)")
 
 
+def _export_to_parquet(
+    db_path: Path,
+    output_dir: Path,
+    *,
+    tables: list[str] | None = None,
+) -> list[Path]:
+    """SQLiteデータベースから指定テーブルをParquet形式で出力する.
+
+    HuggingFace Dataset Viewerでの閲覧を可能にするため、主要テーブルをParquet形式で出力します。
+
+    Args:
+        db_path: SQLiteデータベースのパス
+        output_dir: Parquetファイルの出力ディレクトリ
+        tables: 出力するテーブル名のリスト（Noneの場合はデフォルトテーブルを出力）
+
+    Returns:
+        出力されたParquetファイルのパスのリスト
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # デフォルトテーブル（主要データテーブル）
+    default_tables = [
+        "TAGS",
+        "TAG_STATUS",
+        "TAG_TRANSLATIONS",
+        "TAG_USAGE_COUNTS",
+        "TAG_FORMATS",
+        "TAG_TYPE_NAME",
+        "TAG_TYPE_FORMAT_MAPPING",
+    ]
+
+    tables_to_export = tables if tables is not None else default_tables
+
+    logger.info(f"Exporting {len(tables_to_export)} tables to Parquet: {output_dir}")
+
+    exported_files: list[Path] = []
+
+    def _read_query(q: str) -> pl.DataFrame:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(q)
+            rows = cur.fetchall()
+            if not rows:
+                return pl.DataFrame()
+            return pl.DataFrame([dict(r) for r in rows])
+        finally:
+            conn.close()
+
+    for table_name in tables_to_export:
+        try:
+            df = _read_query(f"SELECT * FROM {table_name}")
+
+            # Parquetファイルとして出力
+            output_path = output_dir / f"{table_name.lower()}.parquet"
+            df.write_parquet(output_path)
+
+            logger.info(
+                f"Exported {table_name}: {len(df)} rows → {output_path.name} "
+                f"({output_path.stat().st_size / 1024 / 1024:.2f} MB)"
+            )
+            exported_files.append(output_path)
+
+        except Exception as e:
+            logger.warning(f"Failed to export table {table_name}: {e}")
+            continue
+
+    logger.info(f"Export complete: {len(exported_files)} Parquet files created")
+    return exported_files
+
+
+def _export_danbooru_view_parquet(
+    db_path: Path,
+    output_dir: Path,
+    *,
+    chunk_size: int = 50_000,
+) -> list[Path]:
+    """HF Dataset Viewer向けのdanbooruビュー（format_id=1）をParquetで出力する.
+
+    方針（決定済み）:
+    - まずは danbooru のみ（format_id=1）
+    - 1行=そのformatにおける推奨タグ（preferred_tag_id）
+    - `deprecated_tags`: alias=1 の逆引き（TAGS.tag の list[str]）
+    - 翻訳列は `lang_ja`, `lang_zh` 固定（list[str]集約）
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sep = "\u001f"  # group_concat 用の区切り（タグに出にくい）
+
+    conn = sqlite3.connect(db_path)
+    try:
+        min_id, max_id = conn.execute(
+            "SELECT MIN(preferred_tag_id), MAX(preferred_tag_id) FROM TAG_STATUS WHERE format_id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if min_id is None or max_id is None:
+        logger.warning("[Parquet] No TAG_STATUS rows for format_id=1, skipping danbooru parquet export")
+        return []
+
+    exported: list[Path] = []
+
+    base_query = f"""
+    WITH canon AS (
+      SELECT DISTINCT preferred_tag_id AS tag_id
+      FROM TAG_STATUS
+      WHERE format_id = 1
+        AND preferred_tag_id BETWEEN {{lo}} AND {{hi}}
+    ),
+    canon_status AS (
+      SELECT preferred_tag_id AS tag_id, type_id
+      FROM TAG_STATUS
+      WHERE format_id = 1
+        AND tag_id = preferred_tag_id
+        AND preferred_tag_id BETWEEN {{lo}} AND {{hi}}
+    ),
+    alias_rev AS (
+      SELECT preferred_tag_id AS tag_id,
+             group_concat(tag, '{sep}') AS deprecated_tags_str
+      FROM (
+        SELECT ts.preferred_tag_id, a.tag
+        FROM TAG_STATUS ts
+        JOIN TAGS a ON a.tag_id = ts.tag_id
+        WHERE ts.format_id = 1
+          AND ts.alias = 1
+          AND ts.preferred_tag_id BETWEEN {{lo}} AND {{hi}}
+        ORDER BY ts.preferred_tag_id, ts.tag_id
+      )
+      GROUP BY preferred_tag_id
+    ),
+    tr_ja AS (
+      SELECT tag_id,
+             group_concat(translation, '{sep}') AS lang_ja_str
+      FROM (
+        SELECT tag_id, translation
+        FROM TAG_TRANSLATIONS
+        WHERE language = 'ja'
+          AND tag_id BETWEEN {{lo}} AND {{hi}}
+        ORDER BY tag_id, translation_id
+      )
+      GROUP BY tag_id
+    ),
+    tr_zh AS (
+      SELECT tag_id,
+             group_concat(translation, '{sep}') AS lang_zh_str
+      FROM (
+        SELECT tag_id, translation
+        FROM TAG_TRANSLATIONS
+        WHERE language = 'zh'
+          AND tag_id BETWEEN {{lo}} AND {{hi}}
+        ORDER BY tag_id, translation_id
+      )
+      GROUP BY tag_id
+    )
+    SELECT
+      t.tag_id AS tag_id,
+      t.tag AS tag,
+      f.format_name AS format_name,
+      COALESCE(tn.type_name, 'unknown') AS type_name,
+      uc.count AS count,
+      alias_rev.deprecated_tags_str AS deprecated_tags_str,
+      tr_ja.lang_ja_str AS lang_ja_str,
+      tr_zh.lang_zh_str AS lang_zh_str
+    FROM canon
+    JOIN TAGS t ON t.tag_id = canon.tag_id
+    JOIN TAG_FORMATS f ON f.format_id = 1
+    LEFT JOIN canon_status cs ON cs.tag_id = t.tag_id
+    LEFT JOIN TAG_TYPE_FORMAT_MAPPING m
+      ON m.format_id = 1 AND m.type_id = cs.type_id
+    LEFT JOIN TAG_TYPE_NAME tn
+      ON tn.type_name_id = m.type_name_id
+    LEFT JOIN TAG_USAGE_COUNTS uc
+      ON uc.tag_id = t.tag_id AND uc.format_id = 1
+    LEFT JOIN alias_rev
+      ON alias_rev.tag_id = t.tag_id
+    LEFT JOIN tr_ja
+      ON tr_ja.tag_id = t.tag_id
+    LEFT JOIN tr_zh
+      ON tr_zh.tag_id = t.tag_id
+    ORDER BY t.tag_id
+    """
+
+    shard = 0
+    start = int(min_id)
+    end_max = int(max_id)
+    logger.info(
+        f"[Parquet] Exporting danbooru view (format_id=1) to {output_dir} "
+        f"(preferred_tag_id range: {start}..{end_max}, chunk={chunk_size})"
+    )
+
+    for lo in range(start, end_max + 1, chunk_size):
+        hi = min(lo + chunk_size - 1, end_max)
+        try:
+            query = base_query.format(lo=int(lo), hi=int(hi))
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                cur = conn.execute(query)
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+            if not rows:
+                continue
+            df = pl.DataFrame(
+                [dict(r) for r in rows],
+                schema={
+                    "tag_id": pl.Int64,
+                    "tag": pl.Utf8,
+                    "format_name": pl.Utf8,
+                    "type_name": pl.Utf8,
+                    "count": pl.Int64,
+                    "deprecated_tags_str": pl.Utf8,
+                    "lang_ja_str": pl.Utf8,
+                    "lang_zh_str": pl.Utf8,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"[Parquet] Failed to read danbooru chunk {lo}-{hi}: {e}")
+            continue
+
+        def _split_list(col: str) -> pl.Expr:
+            return (
+                pl.col(col)
+                .fill_null("")
+                .str.split(sep)
+                .list.eval(pl.element().filter(pl.element() != ""))
+                .alias(col.replace("_str", ""))
+            )
+
+        df = df.with_columns(
+            [
+                _split_list("deprecated_tags_str"),
+                _split_list("lang_ja_str"),
+                _split_list("lang_zh_str"),
+            ]
+        ).drop(["deprecated_tags_str", "lang_ja_str", "lang_zh_str"])
+
+        out_path = output_dir / f"danbooru-{shard:05d}.parquet"
+        df.write_parquet(out_path, compression="zstd")
+        exported.append(out_path)
+        shard += 1
+
+    logger.info(f"[Parquet] Exported danbooru parquet shards: {len(exported)} files")
+    return exported
+
+
 def build_dataset(
     output_path: Path | str,
     sources_dir: Path | str,
@@ -1246,6 +1565,9 @@ def build_dataset(
     overrides_path: Path | str | None = None,
     include_sources_path: Path | str | None = None,
     exclude_sources_path: Path | str | None = None,
+    skip_tags_v4: bool = False,
+    hf_ja_translation_datasets: list[str] | None = None,
+    parquet_output_dir: Path | str | None = None,
     overwrite: bool = False,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
@@ -1256,6 +1578,9 @@ def build_dataset(
         version: データセットバージョン（例: "v4.1.0"）
         report_dir: レポート出力先ディレクトリ（Noneの場合はレポート出力なし）
         overrides_path: 列タイプオーバーライド設定ファイル（JSON）
+        skip_tags_v4: tags_v4.db の取り込みをスキップするか（ライセンス別ビルド用）
+        hf_ja_translation_datasets: Hugging Face datasets から日本語翻訳を取り込む（例: p1atdev/danbooru-ja-tag-pair-20241015）
+        parquet_output_dir: Parquet出力先ディレクトリ（Noneの場合はParquet出力なし）
         overwrite: 既存のoutput_pathを上書きするか
 
     Raises:
@@ -1309,23 +1634,25 @@ def build_dataset(
     apply_connection_pragmas(conn, profile="build")
     try:
 
-        # Phase 1: tags_v4.db からベースデータを取り込み
-        tags_v4_path = _first_existing_path(
-            [
-                # 旧: ルート直下
-                sources_dir / "tags_v4.db",
-                # 旧: CSVディレクトリ配下
-                sources_dir / "TagDB_DataSource_CSV" / "tags_v4.db",
-                # 現: genai-tag-db-tools の同梱DB（LoRAIro前提）
-                sources_dir
-                / "local_packages"
-                / "genai-tag-db-tools"
-                / "src"
-                / "genai_tag_db_tools"
-                / "data"
-                / "tags_v4.db",
-            ]
-        )
+        # Phase 1: tags_v4.db からベースデータを取り込み（必要ならスキップ可能）
+        tags_v4_path = None
+        if not skip_tags_v4:
+            tags_v4_path = _first_existing_path(
+                [
+                    # 旧: ルート直下
+                    sources_dir / "tags_v4.db",
+                    # 旧: CSVディレクトリ配下
+                    sources_dir / "TagDB_DataSource_CSV" / "tags_v4.db",
+                    # 現: genai-tag-db-tools の同梱DB（LoRAIro前提）
+                    sources_dir
+                    / "local_packages"
+                    / "genai-tag-db-tools"
+                    / "src"
+                    / "genai_tag_db_tools"
+                    / "data"
+                    / "tags_v4.db",
+                ]
+            )
         if tags_v4_path:
             logger.info(f"[Phase 1] Importing tags_v4.db from {tags_v4_path}")
             adapter = Tags_v4_Adapter(tags_v4_path)
@@ -1457,13 +1784,45 @@ def build_dataset(
             max_tag_id = cursor.fetchone()[0]
             next_tag_id = (max_tag_id or 0) + 1
         else:
-            logger.warning("[Phase 1] tags_v4.db not found, starting from empty")
+            if skip_tags_v4:
+                logger.warning("[Phase 1] tags_v4.db import skipped, starting from empty")
+            else:
+                logger.warning("[Phase 1] tags_v4.db not found, starting from empty")
             next_tag_id = 1
             existing_tags = set()
 
         # tag_id -> tag のマッピング（後続のTAG_STATUS/USAGE登録で使用）
         cursor = conn.execute("SELECT tag_id, tag FROM TAGS")
         tags_mapping: dict[str, int] = {row[1]: row[0] for row in cursor.fetchall()}
+
+        # Phase 1.5: Hugging Face datasets から翻訳（日本語）を取り込む（任意）
+        if hf_ja_translation_datasets:
+            logger.info(f"[Phase 1.5] Importing HF JA translations: {len(hf_ja_translation_datasets)} dataset(s)")
+            for repo_id in hf_ja_translation_datasets:
+                source_name = f"hf://datasets/{repo_id}"
+                try:
+                    df_hf = P1atdevDanbooruJaTagPairAdapter(repo_id).read()
+                except Exception as e:
+                    logger.warning(f"[Phase 1.5] Failed to load translations from {source_name}: {e}")
+                    continue
+
+                trans_rows = _extract_translations(df_hf, tags_mapping)
+                if not trans_rows:
+                    logger.warning(f"[Phase 1.5] No translations extracted from {source_name} (tags not found?)")
+                    continue
+
+                for tag_id, language, translation in trans_rows:
+                    try:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+                            (tag_id, language, translation),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to insert translation: tag_id={tag_id}, lang={language}, trans={translation} ({e})"
+                        )
+                conn.commit()
+                logger.info(f"[Phase 1.5] Imported translations: {source_name} (rows={len(trans_rows)})")
 
         # Phase 2: CSV ソースから追加データを取り込み
         csv_dir = sources_dir / "TagDB_DataSource_CSV"
@@ -1475,9 +1834,21 @@ def build_dataset(
             # CSV ファイルを再帰的に検索（昇順でソート → 再現性確保）
             csv_files = sorted(csv_dir.rglob("*.csv"))
             logger.info(f"[Phase 2] Found {len(csv_files)} CSV files")
+            danbooru_snapshot = _select_latest_count_snapshot(csv_files)
+            has_authoritative_danbooru_counts = danbooru_snapshot is not None
+            danbooru_snapshot_path: Path | None = danbooru_snapshot[0] if danbooru_snapshot else None
+            danbooru_snapshot_ts: str | None = danbooru_snapshot[1] if danbooru_snapshot else None
+            danbooru_snapshot_counts: dict[int, int] = {}
+            if danbooru_snapshot_path and danbooru_snapshot_ts:
+                logger.info(
+                    f"[Phase 2] Danbooru count snapshot detected: {danbooru_snapshot_path.name} "
+                    f"(timestamp={danbooru_snapshot_ts}). "
+                    "TAG_USAGE_COUNTS(format_id=1) をスナップショットで置換します。"
+                )
 
             for csv_path in csv_files:
                 source_name = csv_path.relative_to(sources_dir).as_posix()
+                is_authoritative_counts = danbooru_snapshot_path is not None and csv_path == danbooru_snapshot_path
 
                 if not _should_include_source(
                     source_name,
@@ -1545,7 +1916,7 @@ def build_dataset(
                     skipped.append((source_name, f"missing_source_tag_columns={df.columns}"))
                     continue
 
-                # 補助列の付与（欠損/NULL は既定値で埋める）
+                # 補助列の付与（欠損/NULL は既定値で埋める。format_id は基本ファイル名から推定する）
                 inferred_format_id = _infer_format_id(csv_path)
                 if "format_id" not in df.columns:
                     df = df.with_columns(pl.lit(inferred_format_id).cast(pl.Int64).alias("format_id"))
@@ -1638,6 +2009,14 @@ def build_dataset(
                                     )
                                     logged_invalid_count = True
                                 continue
+                            # Danbooru の count は「最新スナップショット」を完全に優先する。
+                            # それ以外のソースから format_id=1 の count が入ってきても取り込まない。
+                            if (
+                                fmt_i == 1
+                                and has_authoritative_danbooru_counts
+                                and not is_authoritative_counts
+                            ):
+                                continue
                             usage_rows.append((canonical_tag_id, fmt_i, count_i))
 
                     if st_rows:
@@ -1648,15 +2027,43 @@ def build_dataset(
                         conn.commit()
 
                     if usage_rows:
-                        for tag_id, format_id, count in usage_rows:
-                            conn.execute(
-                                "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count) VALUES (?, ?, ?) "
-                                "ON CONFLICT(tag_id, format_id) DO UPDATE SET count = MAX(count, excluded.count)",
-                                (tag_id, format_id, count),
-                            )
-                        conn.commit()
+                        if is_authoritative_counts:
+                            # 最新スナップショットは「format_id=1 の TAG_USAGE_COUNTS を置換」する。
+                            # ここでは蓄積だけ行い、最後に DELETE→INSERT で timestamp も統一する。
+                            if danbooru_snapshot_ts:
+                                for tag_id, format_id, count in usage_rows:
+                                    if format_id != 1:
+                                        continue
+                                    prev = danbooru_snapshot_counts.get(tag_id)
+                                    danbooru_snapshot_counts[tag_id] = count if prev is None else max(prev, count)
+                            else:
+                                # 日付が取れない場合は、従来通り max マージにフォールバックする
+                                for tag_id, format_id, count in usage_rows:
+                                    conn.execute(
+                                        "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count) VALUES (?, ?, ?) "
+                                        "ON CONFLICT(tag_id, format_id) DO UPDATE SET count = MAX(count, excluded.count)",
+                                        (tag_id, format_id, count),
+                                    )
+                                conn.commit()
+                        else:
+                            for tag_id, format_id, count in usage_rows:
+                                conn.execute(
+                                    "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count) VALUES (?, ?, ?) "
+                                    "ON CONFLICT(tag_id, format_id) DO UPDATE SET count = MAX(count, excluded.count)",
+                                    (tag_id, format_id, count),
+                                )
+                            conn.commit()
 
                 logger.info(f"Imported CSV: {source_name} ({len(df)} rows)")
+
+            # Danbooru の最新スナップショットがある場合は format_id=1 の usage counts を置換する。
+            if danbooru_snapshot_path and danbooru_snapshot_ts and danbooru_snapshot_counts:
+                _replace_usage_counts_for_format(
+                    conn,
+                    format_id=1,
+                    counts_by_tag_id=danbooru_snapshot_counts,
+                    timestamp=danbooru_snapshot_ts,
+                )
 
         # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
         _repair_missing_type_format_mapping(conn, report_dir=report_dir_path if report_dir_path else None)
@@ -1753,6 +2160,11 @@ def build_dataset(
     finally:
         conn.close()
 
+    # Parquet出力（任意）: HF Dataset Viewer向けのビュー表
+    if parquet_output_dir is not None:
+        parquet_dir = Path(parquet_output_dir)
+        _export_danbooru_view_parquet(output_path, parquet_dir)
+
 
 def main() -> None:
     """CLI エントリポイント."""
@@ -1800,6 +2212,26 @@ def main() -> None:
         help="Optional exclude list file (1 entry per line; supports glob patterns)",
     )
     parser.add_argument(
+        "--hf-ja-translation",
+        action="append",
+        default=None,
+        help=(
+            "Hugging Face dataset repo_id for JA translations (repeatable). "
+            "Example: p1atdev/danbooru-ja-tag-pair-20241015"
+        ),
+    )
+    parser.add_argument(
+        "--skip-tags-v4",
+        action="store_true",
+        help="Skip importing tags_v4.db (useful for license-separated builds).",
+    )
+    parser.add_argument(
+        "--parquet-dir",
+        type=Path,
+        default=None,
+        help="Optional Parquet output directory (HF Dataset Viewer-friendly view tables).",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite output database if it already exists",
@@ -1815,6 +2247,9 @@ def main() -> None:
         overrides_path=args.overrides,
         include_sources_path=args.include_sources,
         exclude_sources_path=args.exclude_sources,
+        skip_tags_v4=args.skip_tags_v4,
+        hf_ja_translation_datasets=args.hf_ja_translation,
+        parquet_output_dir=args.parquet_dir,
         overwrite=args.overwrite,
     )
 
