@@ -1655,7 +1655,10 @@ def build_dataset(
 
         # tags_v4 の不整合救済レポート出力（手動修正用）
         if created_missing_tags and report_dir_path:
-            out_path = report_dir_path / "missing_tags_created.tsv"
+            # NOTE: "created" は誤解を招くため、より説明的なファイル名に変更する。
+            # 旧ファイル名も互換のため当面は同内容で出力する。
+            out_path = report_dir_path / "tags_v4_missing_tag_references.tsv"
+            legacy_out_path = report_dir_path / "missing_tags_created.tsv"
             with open(out_path, "w", encoding="utf-8", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerow(
@@ -1671,7 +1674,7 @@ def build_dataset(
                         "preferred_tag_if_exists",
                         "placeholder_tag",
                     ]
-                )
+                    )
                 for r in created_missing_tags:
                     writer.writerow(
                         [
@@ -1687,7 +1690,16 @@ def build_dataset(
                             r["placeholder_tag"],
                         ]
                     )
-            logger.warning(f"Created missing TAGS rows report: {out_path} ({len(created_missing_tags)} rows)")
+            if legacy_out_path != out_path:
+                legacy_out_path.write_text(out_path.read_text(encoding="utf-8"), encoding="utf-8")
+                logger.warning(
+                    f"tags_v4 missing tag references report: {out_path} ({len(created_missing_tags)} rows) "
+                    f"(deprecated alias: {legacy_out_path})"
+                )
+            else:
+                logger.warning(
+                    f"tags_v4 missing tag references report: {out_path} ({len(created_missing_tags)} rows)"
+                )
 
         if report_dir_path:
             _write_placeholder_repairs_tsv(report_dir_path, placeholder_repairs)
