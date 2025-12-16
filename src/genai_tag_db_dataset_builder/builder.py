@@ -736,6 +736,143 @@ def _write_placeholder_repairs_tsv(report_dir: Path, repairs: list[dict[str, obj
     logger.warning(f"Placeholder tag_id repairs report: {out_path} ({len(repairs)} rows)")
 
 
+def _strip_category_prefix(tag: str) -> str | None:
+    """カテゴリprefix（meta:/artist:）を除去してベースタグ名を返す。"""
+    if tag.startswith("meta:"):
+        return tag[len("meta:") :].strip()
+    if tag.startswith("artist:"):
+        return tag[len("artist:") :].strip()
+    return None
+
+
+def _repair_non_e621_prefix_preferred(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """非e621(format_id!=2)で、preferredがカテゴリprefix側になっている行を修正する。
+
+    tags_v4.db に由来するデータで、danbooru/derpibooru/unknown 側に `meta:`/`artist:` が混入することがある。
+    方針としてカテゴリprefixは「保持しつつ alias 解決で prefix 無し側へ寄せる」ため、非e621では
+    - preferred_tag が prefix なら prefix 無しタグへ寄せる
+    - tag 自体が prefix の場合も prefix 無しタグへ寄せる（alias=true）
+    を行う。
+
+    Returns:
+        修正内容のレポート行（TSV出力用）
+    """
+    repairs: list[dict[str, object]] = []
+
+    # 候補: 非e621で、tag または preferred_tag に prefix が含まれる行
+    rows = conn.execute(
+        """
+        SELECT
+            ts.tag_id,
+            ts.format_id,
+            ts.type_id,
+            ts.alias,
+            ts.preferred_tag_id,
+            t.tag AS tag,
+            tp.tag AS preferred_tag
+        FROM TAG_STATUS ts
+        JOIN TAGS t ON t.tag_id = ts.tag_id
+        JOIN TAGS tp ON tp.tag_id = ts.preferred_tag_id
+        WHERE
+            ts.format_id != 2
+            AND (
+                t.tag LIKE 'meta:%' OR t.tag LIKE 'artist:%'
+                OR tp.tag LIKE 'meta:%' OR tp.tag LIKE 'artist:%'
+            )
+        """
+    ).fetchall()
+
+    for (tag_id, format_id, type_id, alias, preferred_tag_id, tag, preferred_tag) in rows:
+        base = _strip_category_prefix(preferred_tag) or _strip_category_prefix(tag)
+        if not base:
+            continue
+
+        base_row = conn.execute("SELECT tag_id FROM TAGS WHERE tag = ? LIMIT 1", (base,)).fetchone()
+        if base_row is None:
+            repairs.append(
+                {
+                    "format_id": int(format_id),
+                    "tag_id": int(tag_id),
+                    "tag": tag,
+                    "old_preferred_tag_id": int(preferred_tag_id),
+                    "old_preferred_tag": preferred_tag,
+                    "new_preferred_tag_id": "",
+                    "new_preferred_tag": "",
+                    "new_alias": "",
+                    "reason": "base_tag_not_found",
+                }
+            )
+            continue
+
+        base_id = int(base_row[0])
+        if base_id == int(tag_id):
+            new_alias = 0
+            new_preferred = int(tag_id)
+        else:
+            new_alias = 1
+            new_preferred = base_id
+
+        if int(preferred_tag_id) == new_preferred and int(alias) == new_alias:
+            continue
+
+        conn.execute(
+            "UPDATE TAG_STATUS SET alias = ?, preferred_tag_id = ? WHERE tag_id = ? AND format_id = ?",
+            (new_alias, new_preferred, tag_id, format_id),
+        )
+        new_preferred_tag = conn.execute("SELECT tag FROM TAGS WHERE tag_id = ?", (new_preferred,)).fetchone()[0]
+        repairs.append(
+            {
+                "format_id": int(format_id),
+                "tag_id": int(tag_id),
+                "tag": tag,
+                "old_preferred_tag_id": int(preferred_tag_id),
+                "old_preferred_tag": preferred_tag,
+                "new_preferred_tag_id": int(new_preferred),
+                "new_preferred_tag": new_preferred_tag,
+                "new_alias": int(new_alias),
+                "reason": "prefix_to_base",
+            }
+        )
+
+    return repairs
+
+
+def _write_non_e621_prefix_repairs_tsv(report_dir: Path, repairs: list[dict[str, object]]) -> None:
+    if not repairs:
+        return
+    out_path = report_dir / "non_e621_prefix_preferred_repairs.tsv"
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(
+            [
+                "format_id",
+                "tag_id",
+                "tag",
+                "old_preferred_tag_id",
+                "old_preferred_tag",
+                "new_preferred_tag_id",
+                "new_preferred_tag",
+                "new_alias",
+                "reason",
+            ]
+        )
+        for r in repairs:
+            writer.writerow(
+                [
+                    r["format_id"],
+                    r["tag_id"],
+                    r["tag"],
+                    r["old_preferred_tag_id"],
+                    r["old_preferred_tag"],
+                    r["new_preferred_tag_id"],
+                    r["new_preferred_tag"],
+                    r["new_alias"],
+                    r["reason"],
+                ]
+            )
+    logger.warning(f"Non-e621 prefix preferred repairs report: {out_path} ({len(repairs)} rows)")
+
+
 def build_dataset(
     output_path: Path | str,
     sources_dir: Path | str,
@@ -935,6 +1072,11 @@ def build_dataset(
                 )
 
             conn.commit()
+            non_e621_prefix_repairs = _repair_non_e621_prefix_preferred(conn)
+            if non_e621_prefix_repairs:
+                conn.commit()
+                if report_dir_path:
+                    _write_non_e621_prefix_repairs_tsv(report_dir_path, non_e621_prefix_repairs)
             logger.info(f"[Phase 1] Imported {len(df_tags)} tags from tags_v4.db")
 
             # 次のtag_id初期値を設定
