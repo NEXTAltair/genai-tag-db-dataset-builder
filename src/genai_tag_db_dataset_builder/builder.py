@@ -1661,6 +1661,15 @@ def build_dataset(
             legacy_out_path = report_dir_path / "missing_tags_created.tsv"
             out_path = report_dir_path / "tags_v4_missing_tag_references.tsv"
 
+            # _repair_placeholder_tag_ids により解決済みの placeholder は DB から消える。
+            # レポートは「未解決（手動対応が必要）」なものだけに絞って出力する。
+            remaining_placeholders = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT tag FROM TAGS WHERE tag LIKE '__missing_tag_id_%__'"
+                ).fetchall()
+            }
+
             with open(legacy_out_path, "w", encoding="utf-8", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerow(
@@ -1676,8 +1685,10 @@ def build_dataset(
                         "preferred_tag_if_exists",
                         "placeholder_tag",
                     ]
-                    )
+                )
                 for r in created_missing_tags:
+                    if r["placeholder_tag"] not in remaining_placeholders:
+                        continue
                     writer.writerow(
                         [
                             r["referenced_as"],
@@ -1696,7 +1707,8 @@ def build_dataset(
                 out_path.write_text(legacy_out_path.read_text(encoding="utf-8"), encoding="utf-8")
 
             logger.warning(
-                f"tags_v4 missing tag references report: {out_path} ({len(created_missing_tags)} rows); "
+                f"tags_v4 missing tag references report: {out_path} "
+                f"({len(remaining_placeholders)} unresolved placeholders); "
                 f"legacy: {legacy_out_path}"
             )
 
