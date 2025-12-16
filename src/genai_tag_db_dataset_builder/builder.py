@@ -324,7 +324,35 @@ def _read_csv_best_effort(
         return None
 
     df = raw.rename({raw.columns[0]: "source_tag"})
-    if len(raw.columns) >= 2:
+
+    # ヘッダー無しCSVの列推定（例: danbooru_241016.csv など）
+    # - [0]=tag
+    # - [1]=type_id（小さい整数が多い）
+    # - [2]=count（大きい整数が多い）
+    # - [3]=deprecated_tags（カンマ区切り）
+    if len(raw.columns) >= 3:
+        sample = raw.head(1000)
+        c1 = sample[sample.columns[1]].cast(pl.Int64, strict=False)
+        c2 = sample[sample.columns[2]].cast(pl.Int64, strict=False)
+        c1_ok = (c1.is_not_null().sum() / max(len(sample), 1)) >= 0.95
+        c2_ok = (c2.is_not_null().sum() / max(len(sample), 1)) >= 0.95
+        c1_max = int(c1.max()) if c1_ok and c1.max() is not None else None
+        c2_max = int(c2.max()) if c2_ok and c2.max() is not None else None
+
+        if (
+            c1_ok
+            and c2_ok
+            and c1_max is not None
+            and c2_max is not None
+            and c1_max <= 100
+            and (c2_max >= 10 or c2_max >= max(1, c1_max) * 10)
+            and len(raw.columns) >= 4
+        ):
+            df = df.rename({raw.columns[1]: "type_id", raw.columns[2]: "count"})
+            df = df.rename({raw.columns[3]: "deprecated_tags"})
+        else:
+            df = df.rename({raw.columns[1]: "count"})
+    elif len(raw.columns) >= 2:
         df = df.rename({raw.columns[1]: "count"})
     return df
 
@@ -1522,12 +1550,19 @@ def build_dataset(
                 if "format_id" not in df.columns:
                     df = df.with_columns(pl.lit(inferred_format_id).cast(pl.Int64).alias("format_id"))
                 else:
-                    df = df.with_columns(pl.col("format_id").fill_null(inferred_format_id).cast(pl.Int64))
+                    df = df.with_columns(
+                        pl.col("format_id")
+                        .cast(pl.Int64, strict=False)
+                        .fill_null(inferred_format_id)
+                        .alias("format_id")
+                    )
 
                 if "type_id" not in df.columns:
                     df = df.with_columns(pl.lit(0).cast(pl.Int64).alias("type_id"))
                 else:
-                    df = df.with_columns(pl.col("type_id").fill_null(0).cast(pl.Int64))
+                    df = df.with_columns(
+                        pl.col("type_id").cast(pl.Int64, strict=False).fill_null(0).alias("type_id")
+                    )
 
                 if "deprecated_tags" not in df.columns:
                     df = df.with_columns(pl.lit("").alias("deprecated_tags"))

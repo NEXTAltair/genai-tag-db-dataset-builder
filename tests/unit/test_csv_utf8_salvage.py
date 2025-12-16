@@ -34,3 +34,17 @@ def test_read_csv_best_effort_skips_invalid_utf8_lines(tmp_path: Path) -> None:
     assert "broken.csv" in report_text
     assert "\t2\t" in report_text  # line_no=2
 
+
+def test_read_csv_best_effort_headerless_schema_inference(tmp_path: Path) -> None:
+    # danbooru 形式の例: tag,type_id,count,deprecated_tags,empty
+    p = tmp_path / "danbooru_241016.csv"
+    p.write_text("1girl,0,10,sole_female,\n", encoding="utf-8")
+
+    df = builder._read_csv_best_effort(
+        p,
+        unknown_report_dir=tmp_path / "unknown",
+        overrides=None,
+        bad_utf8_report_dir=tmp_path / "out",
+    )
+    assert df is not None
+    assert set(["source_tag", "type_id", "count", "deprecated_tags"]).issubset(set(df.columns))
