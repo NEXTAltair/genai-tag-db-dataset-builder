@@ -187,9 +187,22 @@ class Tags_v4_Adapter(BaseAdapter):
         # TAG_STATUS に tag 列を付与（tag_id → tag）
         merged = tag_status_df.join(tags_df.select(["tag_id", "tag"]), on="tag_id", how="left")
 
+        # tag が欠損している行（tags_v4.db 側の不整合など）で group key が NULL になると、
+        # 無関係な複数タグが 1 グループに潰れて「衝突」に見えてしまう。
+        # その場合は tag_id をキーにして、実際に同一 tag_id で矛盾があるかだけを見る。
+        merged = merged.with_columns(
+            [
+                (pl.col("tag").is_null() | (pl.col("tag") == "")).alias("tag_missing"),
+                pl.when(pl.col("tag").is_null() | (pl.col("tag") == ""))
+                .then(pl.format("__missing_tag_id_{}__", pl.col("tag_id")))
+                .otherwise(pl.col("tag"))
+                .alias("tag_key"),
+            ]
+        )
+
         # (tag, format_id) 単位で集計し、衝突（複数バリアント）を検出
         conflicts = (
-            merged.group_by(["tag", "format_id"])
+            merged.group_by(["tag_key", "format_id"])
             .agg(
                 [
                     pl.col("alias").n_unique().alias("alias_variants"),

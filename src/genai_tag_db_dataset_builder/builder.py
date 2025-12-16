@@ -873,6 +873,165 @@ def _write_non_e621_prefix_repairs_tsv(report_dir: Path, repairs: list[dict[str,
     logger.warning(f"Non-e621 prefix preferred repairs report: {out_path} ({len(repairs)} rows)")
 
 
+def _write_tag_status_conflicts_tsv(
+    report_dir: Path, tag_status_df: pl.DataFrame, tags_df: pl.DataFrame
+) -> None:
+    """TAG_STATUS の衝突（同一(tag, format_id)で属性が複数パターン）を詳細TSVで出力する。"""
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    format_name_map = {0: "unknown", 1: "danbooru", 2: "e621", 3: "derpibooru"}
+
+    merged = tag_status_df.join(tags_df.select(["tag_id", "tag"]), on="tag_id", how="left")
+    preferred_tags = tags_df.select(
+        pl.col("tag_id").alias("preferred_tag_id"),
+        pl.col("tag").alias("preferred_tag"),
+    )
+    merged = merged.join(preferred_tags, on="preferred_tag_id", how="left")
+    merged = merged.with_columns(
+        [
+            (pl.col("tag").is_null() | (pl.col("tag") == "")).alias("tag_missing"),
+            pl.when(pl.col("tag").is_null() | (pl.col("tag") == ""))
+            .then(pl.format("__missing_tag_id_{}__", pl.col("tag_id")))
+            .otherwise(pl.col("tag"))
+            .alias("tag_key"),
+        ]
+    )
+
+    conflicts = (
+        merged.group_by(["tag_key", "format_id"])
+        .agg(
+            [
+                pl.col("alias").n_unique().alias("alias_variants"),
+                pl.col("type_id").n_unique().alias("type_id_variants"),
+                pl.col("preferred_tag_id").n_unique().alias("preferred_tag_id_variants"),
+                pl.len().alias("rows"),
+            ]
+        )
+        .filter(
+            (pl.col("alias_variants") > 1)
+            | (pl.col("type_id_variants") > 1)
+            | (pl.col("preferred_tag_id_variants") > 1)
+        )
+    )
+
+    out_path = report_dir / "tag_status_conflicts.tsv"
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(
+            [
+                "format_id",
+                "format_name",
+                "tag",
+                "tag_missing",
+                "tag_id",
+                "alias",
+                "type_id",
+                "preferred_tag_id",
+                "preferred_tag",
+            ]
+        )
+
+    out_summary = report_dir / "tag_status_conflicts_summary.tsv"
+    with open(out_summary, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(
+            [
+                "format_id",
+                "format_name",
+                "tag",
+                "rows",
+                "alias_variants",
+                "type_id_variants",
+                "preferred_tag_id_variants",
+            ]
+        )
+
+    if conflicts.is_empty():
+        logger.warning(
+            f"TAG_STATUS conflicts report: {out_path} (0 rows), summary: {out_summary} (0 keys)"
+        )
+        return
+
+    details = (
+        merged.join(conflicts.select(["tag_key", "format_id"]), on=["tag_key", "format_id"], how="inner")
+        .with_columns(
+            pl.col("format_id")
+            .map_elements(lambda x: format_name_map.get(int(x), "unknown"), return_dtype=pl.String)
+            .alias("format_name")
+        )
+        .select(
+            [
+                "format_id",
+                "format_name",
+                "tag_key",
+                "tag_missing",
+                "tag_id",
+                "alias",
+                "type_id",
+                "preferred_tag_id",
+                "preferred_tag",
+            ]
+        )
+        .sort(["format_id", "tag_key", "tag_id"])
+    )
+
+    with open(out_path, "a", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        for r in details.to_dicts():
+            writer.writerow(
+                [
+                    r["format_id"],
+                    r["format_name"],
+                    r["tag_key"],
+                    r["tag_missing"],
+                    r["tag_id"],
+                    r["alias"],
+                    r["type_id"],
+                    r["preferred_tag_id"],
+                    r["preferred_tag"],
+                ]
+            )
+
+    summary = (
+        conflicts.with_columns(
+            pl.col("format_id")
+            .map_elements(lambda x: format_name_map.get(int(x), "unknown"), return_dtype=pl.String)
+            .alias("format_name")
+        )
+        .select(
+            [
+                "format_id",
+                "format_name",
+                "tag_key",
+                "rows",
+                "alias_variants",
+                "type_id_variants",
+                "preferred_tag_id_variants",
+            ]
+        )
+        .sort(["format_id", "tag_key"])
+    )
+
+    with open(out_summary, "a", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        for r in summary.to_dicts():
+            writer.writerow(
+                [
+                    r["format_id"],
+                    r["format_name"],
+                    r["tag_key"],
+                    r["rows"],
+                    r["alias_variants"],
+                    r["type_id_variants"],
+                    r["preferred_tag_id_variants"],
+                ]
+            )
+
+    logger.warning(
+        f"TAG_STATUS conflicts report: {out_path} ({len(details)} rows), summary: {out_summary} ({len(summary)} keys)"
+    )
+
+
 def build_dataset(
     output_path: Path | str,
     sources_dir: Path | str,
@@ -965,6 +1124,9 @@ def build_dataset(
             df_status = tables["tag_status"]
             df_translations = tables["tag_translations"]
             df_usage = tables["tag_usage_counts"]
+
+            if report_dir_path:
+                _write_tag_status_conflicts_tsv(report_dir_path, df_status, df_tags)
 
             # tags_v4.db 側の不整合救済:
             # TAG_STATUS が参照する tag_id / preferred_tag_id が TAGS に存在しない場合がある。
