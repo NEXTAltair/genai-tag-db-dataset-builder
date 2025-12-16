@@ -13,6 +13,7 @@ import io
 import logging
 import sqlite3
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -218,6 +219,56 @@ def _infer_repair_mode(path: Path) -> str | None:
     if "englishdictionary" in name:
         return "english_dict"
     return None
+
+
+def _load_source_filters(path: Path | None) -> tuple[set[str], list[str]]:
+    """ソースフィルタ（include/exclude）ファイルを読む.
+
+    - 1行1エントリ（相対パス推奨: TagDB_DataSource_CSV/...）
+    - 空行 / # から始まる行は無視
+    - ワイルドカード（*, ?, []）を含む行はパターンとして扱う
+    """
+    if path is None:
+        return set(), []
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Source filter file not found: {p}")
+
+    exact: set[str] = set()
+    patterns: list[str] = []
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if any(ch in line for ch in "*?[]"):
+            patterns.append(line)
+        else:
+            exact.add(line)
+    return exact, patterns
+
+
+def _match_source(name: str, *, exact: set[str], patterns: list[str]) -> bool:
+    if name in exact:
+        return True
+    return any(fnmatch(name, pat) for pat in patterns)
+
+
+def _should_include_source(
+    source_name: str,
+    *,
+    include_exact: set[str],
+    include_patterns: list[str],
+    exclude_exact: set[str],
+    exclude_patterns: list[str],
+) -> bool:
+    """source_name を取り込むかどうかを判定する."""
+    if include_exact or include_patterns:
+        if not _match_source(source_name, exact=include_exact, patterns=include_patterns):
+            return False
+    if exclude_exact or exclude_patterns:
+        if _match_source(source_name, exact=exclude_exact, patterns=exclude_patterns):
+            return False
+    return True
 
 
 def _read_csv_best_effort(
@@ -1165,6 +1216,8 @@ def build_dataset(
     version: str,
     report_dir: Path | str | None = None,
     overrides_path: Path | str | None = None,
+    include_sources_path: Path | str | None = None,
+    exclude_sources_path: Path | str | None = None,
     overwrite: bool = False,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
@@ -1199,6 +1252,9 @@ def build_dataset(
 
     # オーバーライド設定読み込み
     overrides = load_overrides(overrides_path) if overrides_path else None
+
+    include_exact, include_patterns = _load_source_filters(Path(include_sources_path)) if include_sources_path else (set(), [])
+    exclude_exact, exclude_patterns = _load_source_filters(Path(exclude_sources_path)) if exclude_sources_path else (set(), [])
 
     # スキップされたソースのレポート（ソース名, 理由）
     skipped: list[tuple[str, str]] = []
@@ -1394,6 +1450,16 @@ def build_dataset(
 
             for csv_path in csv_files:
                 source_name = csv_path.relative_to(sources_dir).as_posix()
+
+                if not _should_include_source(
+                    source_name,
+                    include_exact=include_exact,
+                    include_patterns=include_patterns,
+                    exclude_exact=exclude_exact,
+                    exclude_patterns=exclude_patterns,
+                ):
+                    skipped.append((source_name, "filtered"))
+                    continue
 
                 # translation source 検出（language列の存在チェック）
                 try:
@@ -1664,6 +1730,18 @@ def main() -> None:
         help="Column type overrides JSON (e.g. column_type_overrides.json)",
     )
     parser.add_argument(
+        "--include-sources",
+        type=Path,
+        default=None,
+        help="Optional include list file (1 entry per line; supports glob patterns)",
+    )
+    parser.add_argument(
+        "--exclude-sources",
+        type=Path,
+        default=None,
+        help="Optional exclude list file (1 entry per line; supports glob patterns)",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite output database if it already exists",
@@ -1677,6 +1755,8 @@ def main() -> None:
         version=args.version,
         report_dir=args.report_dir,
         overrides_path=args.overrides,
+        include_sources_path=args.include_sources,
+        exclude_sources_path=args.exclude_sources,
         overwrite=args.overwrite,
     )
 
