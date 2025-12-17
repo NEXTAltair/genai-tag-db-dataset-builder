@@ -1,5 +1,4 @@
 TagDB_DataSource_CSV/A/danbooru_machine_jp.csv
-TagDB_DataSource_CSV/A/danbooru_klein10k_jp.csv
 TagDB_DataSource_CSV/A/danbooru.csv
 TagDB_DataSource_CSV/A/derpibooru.csv
 TagDB_DataSource_CSV/A/e621.csv

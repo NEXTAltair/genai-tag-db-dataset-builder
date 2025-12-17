@@ -167,6 +167,14 @@ def _infer_language_code(column_name: str) -> str:
     return lang_map.get(col_lower, col_lower[:2])  # デフォルトは先頭2文字
 
 
+def _normalize_language_value(value: str) -> str:
+    """DB側の language 値を正規化する（例: japanese -> ja）。"""
+    v = str(value).strip()
+    if not v:
+        return v
+    return _infer_language_code(v)
+
+
 def _find_tags_v4_db(sources_dir: Path) -> Path | None:
     return _first_existing_path(
         [
@@ -714,6 +722,179 @@ def _insert_translations(
             "INSERT OR IGNORE INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
             chunk,
         )
+
+
+def _delete_ja_translations_by_value_list(
+    conn: sqlite3.Connection,
+    *,
+    values: list[str],
+) -> int:
+    """TAG_TRANSLATIONS から language='ja' の特定 translation を削除する.
+
+    Returns:
+        削除された行数（SQLiteの total_changes 差分）
+    """
+    if not values:
+        return 0
+
+    conn.execute("DROP TABLE IF EXISTS temp._cleanup_values")
+    conn.execute("CREATE TEMP TABLE _cleanup_values (value TEXT PRIMARY KEY)")
+
+    # NOTE: 巨大リストでも効率よく削除できるよう、TEMP表に詰めてJOINで消す
+    for chunk in _chunked(values, 10_000):
+        conn.executemany(
+            "INSERT OR IGNORE INTO _cleanup_values (value) VALUES (?)",
+            [(v,) for v in chunk if v],
+        )
+
+    conn.execute(
+        """
+        DELETE FROM TAG_TRANSLATIONS
+        WHERE language = 'ja'
+          AND translation IN (SELECT value FROM _cleanup_values)
+        """
+    )
+    deleted = int(conn.execute("SELECT changes()").fetchone()[0])
+    conn.execute("DROP TABLE IF EXISTS temp._cleanup_values")
+    conn.commit()
+    return deleted
+
+
+def _delete_translations_ascii_only_for_languages(
+    conn: sqlite3.Connection,
+    *,
+    languages: set[str],
+) -> int:
+    """指定 language のうち、ASCIIのみの translation を削除する."""
+    if not languages:
+        return 0
+
+    q_marks = ",".join(["?"] * len(languages))
+    rows = conn.execute(
+        f"SELECT translation_id, translation FROM TAG_TRANSLATIONS WHERE language IN ({q_marks})",
+        tuple(sorted(languages)),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    bad_ids: list[int] = []
+    for translation_id, text in rows:
+        if not text:
+            continue
+        s = str(text)
+        if all(ord(ch) < 128 for ch in s):
+            bad_ids.append(int(translation_id))
+
+    if not bad_ids:
+        return 0
+
+    changes_before = conn.total_changes
+    for chunk in _chunked(bad_ids, 900):  # SQLiteの変数制限回避
+        marks = ",".join(["?"] * len(chunk))
+        conn.execute(
+            f"DELETE FROM TAG_TRANSLATIONS WHERE translation_id IN ({marks})",
+            tuple(chunk),
+        )
+    conn.commit()
+    return int(conn.total_changes - changes_before)
+
+
+def _delete_translations_missing_required_script(
+    conn: sqlite3.Connection,
+    *,
+    language: str,
+) -> int:
+    """languageごとの必須文字種を含まない translation を削除する.
+
+    方針（ユーザー決定）:
+    - ja: ひらがな/カタカナ/漢字（CJK）のいずれも含まないものは誤りとして削除
+    - zh: 漢字（CJK）を含まないものは誤りとして削除
+    - ko: ハングルを含まないものは誤りとして削除
+    """
+    import re
+
+    lang = language
+    if lang == "ja":
+        required = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+    elif lang == "zh":
+        required = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+    elif lang == "ko":
+        required = re.compile(r"[\uac00-\ud7af]")
+    else:
+        return 0
+
+    rows = conn.execute(
+        "SELECT translation_id, translation FROM TAG_TRANSLATIONS WHERE language = ?",
+        (lang,),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    bad_ids: list[int] = []
+    for translation_id, text in rows:
+        if not text:
+            continue
+        s = str(text)
+        if not required.search(s):
+            bad_ids.append(int(translation_id))
+
+    if not bad_ids:
+        return 0
+
+    changes_before = conn.total_changes
+    for chunk in _chunked(bad_ids, 900):
+        marks = ",".join(["?"] * len(chunk))
+        conn.execute(
+            f"DELETE FROM TAG_TRANSLATIONS WHERE translation_id IN ({marks})",
+            tuple(chunk),
+        )
+    conn.commit()
+    return int(conn.total_changes - changes_before)
+
+
+def _load_column_values_from_csv(
+    csv_path: Path,
+    *,
+    column_name: str,
+    overrides: ColumnTypeOverrides | None,
+    report_dir_path: Path | None,
+) -> list[str]:
+    unknown_dir = (
+        report_dir_path / "unknown"
+        if report_dir_path
+        else Path("reports/dataset_builder/unknown")
+    )
+    df = _read_csv_best_effort(
+        csv_path,
+        unknown_report_dir=unknown_dir,
+        overrides=overrides,
+        bad_utf8_report_dir=report_dir_path,
+    )
+    if df is None:
+        return []
+    if column_name not in df.columns:
+        return []
+
+    # None/空は除外してユニーク化
+    try:
+        values = (
+            df.select(pl.col(column_name).cast(pl.Utf8, strict=False))
+            .to_series()
+            .drop_nulls()
+            .to_list()
+        )
+    except Exception:
+        return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in values:
+        s = str(v).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
 
 
 def _write_conflicts_tsv(path: Path, conflicts: list[_ConflictRow]) -> None:
@@ -1804,7 +1985,13 @@ def build_dataset(
                 for row in df_tags.to_dicts():
                     conn.execute(
                         "INSERT INTO TAGS (tag_id, tag, source_tag, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                        (row["tag_id"], row["tag"], row["source_tag"], row["created_at"], row["updated_at"]),
+                        (
+                            row["tag_id"],
+                            row["tag"],
+                            row["source_tag"],
+                            row["created_at"],
+                            row["updated_at"],
+                        ),
                     )
                     existing_tags.add(row["tag"])
 
@@ -1826,13 +2013,14 @@ def build_dataset(
 
                 # TAG_TRANSLATIONS 登録
                 for row in df_translations.to_dicts():
+                    normalized_lang = _normalize_language_value(row["language"])
                     conn.execute(
                         "INSERT OR IGNORE INTO TAG_TRANSLATIONS (translation_id, tag_id, language, translation, created_at, updated_at) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
                         (
                             row["translation_id"],
                             row["tag_id"],
-                            row["language"],
+                            normalized_lang,
                             row["translation"],
                             row["created_at"],
                             row["updated_at"],
@@ -1844,7 +2032,13 @@ def build_dataset(
                     conn.execute(
                         "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count, created_at, updated_at) "
                         "VALUES (?, ?, ?, ?, ?)",
-                        (row["tag_id"], row["format_id"], row["count"], row["created_at"], row["updated_at"]),
+                        (
+                            row["tag_id"],
+                            row["format_id"],
+                            row["count"],
+                            row["created_at"],
+                            row["updated_at"],
+                        ),
                     )
 
                 conn.commit()
@@ -2111,13 +2305,20 @@ def build_dataset(
                             )
                     if trans_rows:
                         conn.commit()
-                        logger.info(
-                            f"Imported translations: {source_name} (lang={language}, rows={len(trans_rows)})"
-                        )
+                        logger.info(f"Imported translations: {source_name} (rows={len(trans_rows)})")
                     else:
                         logger.warning(
                             f"No translations extracted from {source_name} (tags not yet registered?)"
                         )
+                    source_effects.append(
+                        {
+                            "source": source_name,
+                            "action": "translations_imported",
+                            "rows_read": int(df.height),
+                            "db_changes": int(conn.total_changes - changes_before),
+                            "note": "",
+                        }
+                    )
                     continue
 
                 if "source_tag" not in df.columns and "tag" in df.columns:
@@ -2306,6 +2507,94 @@ def build_dataset(
                         "note": "authoritative danbooru snapshot",
                     }
                 )
+
+            # 翻訳データの混入（データ品質起因）をビルド側でクリーンアップする
+            #
+            # - CC0版: tags_v4.db 側に中国語が language='japanese' として誤登録されていた場合がある。
+            #         Tags_zh_full.csv の zh 翻訳語と一致する language='ja' を削除して、lang_ja 汚染を防ぐ。
+            # - MIT版: tags_v4.db 側に英単語が language='japanese' として誤登録されていた場合がある。
+            #         EnglishDictionary.csv の source_tag と一致する language='ja' を削除する。
+            #
+            # NOTE: ライセンス混入を避けるため、対象CSVが「今回のビルドで取り込み対象」と判定された場合のみ実行する。
+            cleanup_specs: list[tuple[Path, str, str]] = [
+                (
+                    sources_dir / "TagDB_DataSource_CSV" / "translation" / "Tags_zh_full.csv",
+                    "zh-Hant",
+                    "cleanup_ja_translations_overlap_zh",
+                ),
+                (
+                    sources_dir / "TagDB_DataSource_CSV" / "A" / "EnglishDictionary.csv",
+                    "source_tag",
+                    "cleanup_ja_translations_english_dictionary",
+                ),
+            ]
+            for cleanup_csv_path, col_name, note in cleanup_specs:
+                if not cleanup_csv_path.exists():
+                    continue
+                cleanup_source_name = cleanup_csv_path.relative_to(sources_dir).as_posix()
+                if not _should_include_source(
+                    cleanup_source_name,
+                    include_exact=include_exact,
+                    include_patterns=include_patterns,
+                    exclude_exact=exclude_exact,
+                    exclude_patterns=exclude_patterns,
+                ):
+                    continue
+
+                values = _load_column_values_from_csv(
+                    cleanup_csv_path,
+                    column_name=col_name,
+                    overrides=overrides,
+                    report_dir_path=report_dir_path,
+                )
+                if not values:
+                    continue
+
+                changes_before = conn.total_changes
+                deleted = _delete_ja_translations_by_value_list(conn, values=values)
+                if deleted <= 0:
+                    continue
+                source_effects.append(
+                    {
+                        "source": cleanup_source_name,
+                        "action": "cleanup_deleted",
+                        "rows_read": int(len(values)),
+                        "db_changes": int(conn.total_changes - changes_before),
+                        "note": note,
+                    }
+                )
+                logger.warning(
+                    f"[Cleanup] Deleted {deleted} ja translations based on {cleanup_source_name} "
+                    f"(column={col_name}, note={note})"
+                )
+
+            # ja/zh/ko の翻訳は、それぞれの必須文字種を含まない場合（絵文字/顔文字/記号/全角記号など）は誤りとして削除する。
+            #
+            # NOTE:
+            # - romaji の作品名など（ASCIIのみ）はデータに含まれない前提（ユーザー判断）
+            # - 絵文字は翻訳として不要なため削除対象（ユーザー判断）
+            # - 全角コロン等の混入も翻訳としては不要なため削除対象
+            total_deleted = 0
+            for lang in ("ja", "zh", "ko"):
+                changes_before = conn.total_changes
+                deleted = _delete_translations_missing_required_script(conn, language=lang)
+                if deleted <= 0:
+                    continue
+                total_deleted += deleted
+                source_effects.append(
+                    {
+                        "source": "TAG_TRANSLATIONS",
+                        "action": "cleanup_deleted",
+                        "rows_read": 0,
+                        "db_changes": int(conn.total_changes - changes_before),
+                        "note": f"cleanup_missing_required_script:{lang}",
+                    }
+                )
+                logger.warning(
+                    f"[Cleanup] Deleted {deleted} translations lacking required script for {lang}"
+                )
+            if total_deleted:
+                logger.warning(f"[Cleanup] Total deleted translations (required script filter): {total_deleted}")
 
         # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
         _repair_missing_type_format_mapping(conn, report_dir=report_dir_path if report_dir_path else None)

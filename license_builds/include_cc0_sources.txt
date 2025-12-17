@@ -3,3 +3,4 @@ TagDB_DataSource_CSV/TAG_FORMATS_202407081830.csv
 TagDB_DataSource_CSV/TAG_TYPES_202407081829.csv
 TagDB_DataSource_CSV/FORMAT_TAG_TYPES_202407081829.csv
 TagDB_DataSource_CSV/translation/Tags_zh_full.csv
+TagDB_DataSource_CSV/A/danbooru_klein10k_jp.csv
