@@ -747,8 +747,55 @@ def _write_skipped_tsv(path: Path, skipped: list[tuple[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["source", "reason"], delimiter="\t")
         writer.writeheader()
-        for (src, reason) in skipped:
+        for src, reason in skipped:
             writer.writerow({"source": src, "reason": reason})
+
+
+def _write_source_effects_tsv(path: Path, effects: list[dict[str, object]]) -> None:
+    if not effects:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["source", "action", "rows_read", "db_changes", "note"],
+            delimiter="\t",
+        )
+        writer.writeheader()
+        for r in effects:
+            writer.writerow(
+                {
+                    "source": r.get("source", ""),
+                    "action": r.get("action", ""),
+                    "rows_read": r.get("rows_read", 0),
+                    "db_changes": r.get("db_changes", 0),
+                    "note": r.get("note", ""),
+                }
+            )
+
+
+_TAG_STATUS_UPSERT_IF_CHANGED_SQL = """
+INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(tag_id, format_id) DO UPDATE SET
+  type_id = excluded.type_id,
+  alias = excluded.alias,
+  preferred_tag_id = excluded.preferred_tag_id,
+  updated_at = CURRENT_TIMESTAMP
+WHERE
+  TAG_STATUS.type_id IS NOT excluded.type_id
+  OR TAG_STATUS.alias IS NOT excluded.alias
+  OR TAG_STATUS.preferred_tag_id IS NOT excluded.preferred_tag_id;
+""".strip()
+
+_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL = """
+INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count)
+VALUES (?, ?, ?)
+ON CONFLICT(tag_id, format_id) DO UPDATE SET
+  count = excluded.count
+WHERE
+  excluded.count > TAG_USAGE_COUNTS.count;
+""".strip()
 
 
 def _repair_placeholder_tag_ids(conn: sqlite3.Connection) -> list[dict[str, object]]:
@@ -771,7 +818,7 @@ def _repair_placeholder_tag_ids(conn: sqlite3.Connection) -> list[dict[str, obje
     if not placeholder_rows:
         return repairs
 
-    for (missing_id, placeholder_tag) in placeholder_rows:
+    for missing_id, placeholder_tag in placeholder_rows:
         status_rows = conn.execute(
             "SELECT format_id, type_id, alias, preferred_tag_id FROM TAG_STATUS WHERE tag_id = ?",
             (missing_id,),
@@ -792,7 +839,7 @@ def _repair_placeholder_tag_ids(conn: sqlite3.Connection) -> list[dict[str, obje
             continue
 
         status_map: dict[int, int] = {}
-        for (format_id, type_id, alias, preferred_tag_id) in status_rows:
+        for format_id, type_id, alias, preferred_tag_id in status_rows:
             if int(preferred_tag_id) != int(missing_id):
                 status_map[int(format_id)] = int(preferred_tag_id)
             if int(preferred_tag_id) == int(missing_id):
@@ -853,7 +900,7 @@ def _repair_placeholder_tag_ids(conn: sqlite3.Connection) -> list[dict[str, obje
             "SELECT format_id, count FROM TAG_USAGE_COUNTS WHERE tag_id = ?",
             (missing_id,),
         ).fetchall()
-        for (format_id, count) in usage_rows:
+        for format_id, count in usage_rows:
             preferred = status_map.get(int(format_id))
             if preferred is None or preferred == int(missing_id):
                 conn.execute(
@@ -940,7 +987,9 @@ def _write_placeholder_repairs_tsv(report_dir: Path, repairs: list[dict[str, obj
     out_path = report_dir / "placeholder_tag_id_repairs.tsv"
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
-        writer.writerow(["missing_id", "action", "format_id", "preferred_tag_id", "note", "placeholder_tag"])
+        writer.writerow(
+            ["missing_id", "action", "format_id", "preferred_tag_id", "note", "placeholder_tag"]
+        )
         for r in repairs:
             writer.writerow(
                 [
@@ -1001,7 +1050,7 @@ def _repair_non_e621_prefix_preferred(conn: sqlite3.Connection) -> list[dict[str
         """
     ).fetchall()
 
-    for (tag_id, format_id, type_id, alias, preferred_tag_id, tag, preferred_tag) in rows:
+    for tag_id, format_id, type_id, alias, preferred_tag_id, tag, preferred_tag in rows:
         base = _strip_category_prefix(preferred_tag) or _strip_category_prefix(tag)
         if not base:
             continue
@@ -1038,7 +1087,9 @@ def _repair_non_e621_prefix_preferred(conn: sqlite3.Connection) -> list[dict[str
             "UPDATE TAG_STATUS SET alias = ?, preferred_tag_id = ? WHERE tag_id = ? AND format_id = ?",
             (new_alias, new_preferred, tag_id, format_id),
         )
-        new_preferred_tag = conn.execute("SELECT tag FROM TAGS WHERE tag_id = ?", (new_preferred,)).fetchone()[0]
+        new_preferred_tag = conn.execute(
+            "SELECT tag FROM TAGS WHERE tag_id = ?", (new_preferred,)
+        ).fetchone()[0]
         repairs.append(
             {
                 "format_id": int(format_id),
@@ -1166,9 +1217,7 @@ def _write_tag_status_conflicts_tsv(
         )
 
     if conflicts.is_empty():
-        logger.warning(
-            f"TAG_STATUS conflicts report: {out_path} (0 rows), summary: {out_summary} (0 keys)"
-        )
+        logger.warning(f"TAG_STATUS conflicts report: {out_path} (0 rows), summary: {out_summary} (0 keys)")
         return
 
     details = (
@@ -1565,9 +1614,10 @@ def build_dataset(
     overrides_path: Path | str | None = None,
     include_sources_path: Path | str | None = None,
     exclude_sources_path: Path | str | None = None,
-    skip_tags_v4: bool = False,
     hf_ja_translation_datasets: list[str] | None = None,
     parquet_output_dir: Path | str | None = None,
+    base_db_path: Path | str | None = None,
+    skip_danbooru_snapshot_replace: bool = False,
     overwrite: bool = False,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
@@ -1578,17 +1628,25 @@ def build_dataset(
         version: データセットバージョン（例: "v4.1.0"）
         report_dir: レポート出力先ディレクトリ（Noneの場合はレポート出力なし）
         overrides_path: 列タイプオーバーライド設定ファイル（JSON）
-        skip_tags_v4: tags_v4.db の取り込みをスキップするか（ライセンス別ビルド用）
         hf_ja_translation_datasets: Hugging Face datasets から日本語翻訳を取り込む（例: p1atdev/danbooru-ja-tag-pair-20241015）
         parquet_output_dir: Parquet出力先ディレクトリ（Noneの場合はParquet出力なし）
+        base_db_path: ベースとなる既存SQLiteファイル（MIT版ビルド等で使用）。指定時はPhase 0/1をスキップ
+        skip_danbooru_snapshot_replace: Danbooruスナップショット置換をスキップする（MIT版で使用）
         overwrite: 既存のoutput_pathを上書きするか
 
     Raises:
         FileExistsError: output_pathが既に存在し、overwrite=False の場合
-        FileNotFoundError: sources_dirが存在しない場合
+        FileNotFoundError: sources_dirが存在しない場合、またはbase_db_pathが存在しない場合
     """
     output_path = Path(output_path)
     sources_dir = Path(sources_dir)
+
+    # base_db_path が指定されている場合はチェック
+    if base_db_path:
+        base_db_path = Path(base_db_path)
+        if not base_db_path.exists():
+            msg = f"Base DB not found: {base_db_path}"
+            raise FileNotFoundError(msg)
 
     if output_path.exists() and not overwrite:
         msg = f"Output DB already exists: {output_path}. Use --overwrite to replace."
@@ -1606,11 +1664,18 @@ def build_dataset(
     # オーバーライド設定読み込み
     overrides = load_overrides(overrides_path) if overrides_path else None
 
-    include_exact, include_patterns = _load_source_filters(Path(include_sources_path)) if include_sources_path else (set(), [])
-    exclude_exact, exclude_patterns = _load_source_filters(Path(exclude_sources_path)) if exclude_sources_path else (set(), [])
+    include_exact, include_patterns = (
+        _load_source_filters(Path(include_sources_path)) if include_sources_path else (set(), [])
+    )
+    exclude_exact, exclude_patterns = (
+        _load_source_filters(Path(exclude_sources_path)) if exclude_sources_path else (set(), [])
+    )
 
     # スキップされたソースのレポート（ソース名, 理由）
     skipped: list[tuple[str, str]] = []
+    # ソースごとの「実際にDBへ影響があったか」を後で判定できるように、DB変更量を記録する。
+    # 目的: MIT版READMEに「影響したMITソースだけ」を列挙するため。
+    source_effects: list[dict[str, object]] = []
 
     # tags_v4.db 側の不整合（TAG_STATUS が存在しない tag_id / preferred_tag_id を参照）を
     # ビルド側で最低限救済するためのレポート。
@@ -1621,22 +1686,32 @@ def build_dataset(
     created_missing_tags: list[dict[str, object]] = []
     placeholder_repairs: list[dict[str, object]] = []
 
-    # Phase 0: DB 作成・マスターデータ登録
-    logger.info(f"[Phase 0] Creating database: {output_path}")
-    if output_path.exists():
-        output_path.unlink()
-    create_database(output_path)
+    # base_db_path が指定されている場合は、Phase 0/1 をスキップして既存DBをコピー
+    skip_phase_0_1 = base_db_path is not None
+    if skip_phase_0_1:
+        import shutil
 
-    logger.info("[Phase 0] Inserting master data (FORMATS, TYPES, LANGUAGES)")
-    initialize_master_data(output_path)
+        logger.info(f"[Base DB] Copying base database from {base_db_path} to {output_path}")
+        if output_path.exists():
+            output_path.unlink()
+        shutil.copy2(base_db_path, output_path)
+        logger.info("[Base DB] Base database copied. Skipping Phase 0/1.")
+
+    # Phase 0: DB 作成・マスターデータ登録（base_db_path 指定時はスキップ）
+    if not skip_phase_0_1:
+        logger.info(f"[Phase 0] Creating database: {output_path}")
+        if output_path.exists():
+            output_path.unlink()
+        create_database(output_path)
+
+        logger.info("[Phase 0] Inserting master data (FORMATS, TYPES, LANGUAGES)")
+        initialize_master_data(output_path)
 
     conn = sqlite3.connect(output_path)
     apply_connection_pragmas(conn, profile="build")
     try:
-
-        # Phase 1: tags_v4.db からベースデータを取り込み（必要ならスキップ可能）
-        tags_v4_path = None
-        if not skip_tags_v4:
+        # Phase 1: tags_v4.db からベースデータを取り込み（base_db_path 指定時はスキップ）
+        if not skip_phase_0_1:
             tags_v4_path = _first_existing_path(
                 [
                     # 旧: ルート直下
@@ -1653,162 +1728,212 @@ def build_dataset(
                     / "tags_v4.db",
                 ]
             )
-        if tags_v4_path:
-            logger.info(f"[Phase 1] Importing tags_v4.db from {tags_v4_path}")
-            adapter = Tags_v4_Adapter(tags_v4_path)
-            tables = adapter.read()
+            if tags_v4_path:
+                logger.info(f"[Phase 1] Importing tags_v4.db from {tags_v4_path}")
+                changes_before = conn.total_changes
+                adapter = Tags_v4_Adapter(tags_v4_path)
+                tables = adapter.read()
 
-            df_tags = tables["tags"]
-            df_status = tables["tag_status"]
-            df_translations = tables["tag_translations"]
-            df_usage = tables["tag_usage_counts"]
+                df_tags = tables["tags"]
+                df_status = tables["tag_status"]
+                df_translations = tables["tag_translations"]
+                df_usage = tables["tag_usage_counts"]
 
-            if report_dir_path:
-                _write_tag_status_conflicts_tsv(report_dir_path, df_status, df_tags)
+                if report_dir_path:
+                    _write_tag_status_conflicts_tsv(report_dir_path, df_status, df_tags)
 
-            # tags_v4.db 側の不整合救済:
-            # TAG_STATUS が参照する tag_id / preferred_tag_id が TAGS に存在しない場合がある。
-            # 新DB側では外部キー整合性を維持したいので、placeholder TAGS 行を作成して挿入する。
-            # ※ ここで作る tag/source_tag は手動修正用のダミー。
-            tags_v4_tag_ids = set(df_tags["tag_id"].to_list())
-            status_tag_ids = set(df_status["tag_id"].to_list())
-            status_preferred_ids = set(df_status["preferred_tag_id"].to_list())
-            missing_tag_ids = sorted(status_tag_ids - tags_v4_tag_ids)
-            missing_preferred_ids = sorted(status_preferred_ids - tags_v4_tag_ids)
-            missing_ids = sorted(set(missing_tag_ids) | set(missing_preferred_ids))
+                # tags_v4.db 側の不整合救済:
+                # TAG_STATUS が参照する tag_id / preferred_tag_id が TAGS に存在しない場合がある。
+                # 新DB側では外部キー整合性を維持したいので、placeholder TAGS 行を作成して挿入する。
+                # ※ ここで作る tag/source_tag は手動修正用のダミー。
+                tags_v4_tag_ids = set(df_tags["tag_id"].to_list())
+                status_tag_ids = set(df_status["tag_id"].to_list())
+                status_preferred_ids = set(df_status["preferred_tag_id"].to_list())
+                missing_tag_ids = sorted(status_tag_ids - tags_v4_tag_ids)
+                missing_preferred_ids = sorted(status_preferred_ids - tags_v4_tag_ids)
+                missing_ids = sorted(set(missing_tag_ids) | set(missing_preferred_ids))
 
-            # tag_id -> tag を tags_v4 の TAGS から引ける範囲で保持（レポート用）
-            tags_v4_id_to_tag: dict[int, str] = dict(
-                zip(df_tags["tag_id"].to_list(), df_tags["tag"].to_list())
-            )
-
-            for missing_id in missing_ids:
-                placeholder_tag = f"__missing_tag_id_{missing_id}__"
-                conn.execute(
-                    "INSERT OR IGNORE INTO TAGS (tag_id, tag, source_tag) VALUES (?, ?, ?)",
-                    (missing_id, placeholder_tag, placeholder_tag),
+                # tag_id -> tag を tags_v4 の TAGS から引ける範囲で保持（レポート用）
+                tags_v4_id_to_tag: dict[int, str] = dict(
+                    zip(df_tags["tag_id"].to_list(), df_tags["tag"].to_list())
                 )
 
-            # 手動修正用の詳細レポート（TAG_STATUSの参照元も含める）
-            if missing_ids:
-                missing_set = set(missing_ids)
-                for row in df_status.to_dicts():
-                    tag_id = int(row["tag_id"])
-                    preferred_tag_id = int(row["preferred_tag_id"])
-
-                    referenced_as: str | None = None
-                    missing_id: int | None = None
-                    if tag_id in missing_set:
-                        referenced_as = "tag_id"
-                        missing_id = tag_id
-                    elif preferred_tag_id in missing_set:
-                        referenced_as = "preferred_tag_id"
-                        missing_id = preferred_tag_id
-                    else:
-                        continue
-
+                for missing_id in missing_ids:
                     placeholder_tag = f"__missing_tag_id_{missing_id}__"
-                    created_missing_tags.append(
-                        {
-                            "referenced_as": referenced_as,
-                            "missing_id": missing_id,
-                            "format_id": int(row["format_id"]),
-                            "type_id": int(row["type_id"]),
-                            "alias": int(row["alias"]),
-                            "tag_id": tag_id,
-                            "preferred_tag_id": preferred_tag_id,
-                            "tag_if_exists": tags_v4_id_to_tag.get(tag_id, ""),
-                            "preferred_tag_if_exists": tags_v4_id_to_tag.get(preferred_tag_id, ""),
-                            "placeholder_tag": placeholder_tag,
-                        }
+                    conn.execute(
+                        "INSERT OR IGNORE INTO TAGS (tag_id, tag, source_tag) VALUES (?, ?, ?)",
+                        (missing_id, placeholder_tag, placeholder_tag),
                     )
 
-            # TAGS 登録
-            existing_tags: set[str] = set()
-            for row in df_tags.to_dicts():
-                conn.execute(
-                    "INSERT INTO TAGS (tag_id, tag, source_tag, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (row["tag_id"], row["tag"], row["source_tag"], row["created_at"], row["updated_at"]),
-                )
-                existing_tags.add(row["tag"])
+                # 手動修正用の詳細レポート（TAG_STATUSの参照元も含める）
+                if missing_ids:
+                    missing_set = set(missing_ids)
+                    for row in df_status.to_dicts():
+                        tag_id = int(row["tag_id"])
+                        preferred_tag_id = int(row["preferred_tag_id"])
 
-            # TAG_STATUS 登録
-            for row in df_status.to_dicts():
-                conn.execute(
-                    "INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        row["tag_id"],
-                        row["format_id"],
-                        row["type_id"],
-                        row["alias"],
-                        row["preferred_tag_id"],
-                        row["created_at"],
-                        row["updated_at"],
-                    ),
-                )
+                        referenced_as: str | None = None
+                        missing_id: int | None = None
+                        if tag_id in missing_set:
+                            referenced_as = "tag_id"
+                            missing_id = tag_id
+                        elif preferred_tag_id in missing_set:
+                            referenced_as = "preferred_tag_id"
+                            missing_id = preferred_tag_id
+                        else:
+                            continue
 
-            # TAG_TRANSLATIONS 登録
-            for row in df_translations.to_dicts():
-                conn.execute(
-                    "INSERT OR IGNORE INTO TAG_TRANSLATIONS (translation_id, tag_id, language, translation, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (
-                        row["translation_id"],
-                        row["tag_id"],
-                        row["language"],
-                        row["translation"],
-                        row["created_at"],
-                        row["updated_at"],
-                    ),
-                )
+                        placeholder_tag = f"__missing_tag_id_{missing_id}__"
+                        created_missing_tags.append(
+                            {
+                                "referenced_as": referenced_as,
+                                "missing_id": missing_id,
+                                "format_id": int(row["format_id"]),
+                                "type_id": int(row["type_id"]),
+                                "alias": int(row["alias"]),
+                                "tag_id": tag_id,
+                                "preferred_tag_id": preferred_tag_id,
+                                "tag_if_exists": tags_v4_id_to_tag.get(tag_id, ""),
+                                "preferred_tag_if_exists": tags_v4_id_to_tag.get(preferred_tag_id, ""),
+                                "placeholder_tag": placeholder_tag,
+                            }
+                        )
 
-            # TAG_USAGE_COUNTS 登録
-            for row in df_usage.to_dicts():
-                conn.execute(
-                    "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (row["tag_id"], row["format_id"], row["count"], row["created_at"], row["updated_at"]),
-                )
+                # TAGS 登録
+                existing_tags: set[str] = set()
+                for row in df_tags.to_dicts():
+                    conn.execute(
+                        "INSERT INTO TAGS (tag_id, tag, source_tag, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (row["tag_id"], row["tag"], row["source_tag"], row["created_at"], row["updated_at"]),
+                    )
+                    existing_tags.add(row["tag"])
 
-            conn.commit()
-            non_e621_prefix_repairs = _repair_non_e621_prefix_preferred(conn)
-            if non_e621_prefix_repairs:
+                # TAG_STATUS 登録
+                for row in df_status.to_dicts():
+                    conn.execute(
+                        "INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            row["tag_id"],
+                            row["format_id"],
+                            row["type_id"],
+                            row["alias"],
+                            row["preferred_tag_id"],
+                            row["created_at"],
+                            row["updated_at"],
+                        ),
+                    )
+
+                # TAG_TRANSLATIONS 登録
+                for row in df_translations.to_dicts():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO TAG_TRANSLATIONS (translation_id, tag_id, language, translation, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            row["translation_id"],
+                            row["tag_id"],
+                            row["language"],
+                            row["translation"],
+                            row["created_at"],
+                            row["updated_at"],
+                        ),
+                    )
+
+                # TAG_USAGE_COUNTS 登録
+                for row in df_usage.to_dicts():
+                    conn.execute(
+                        "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (row["tag_id"], row["format_id"], row["count"], row["created_at"], row["updated_at"]),
+                    )
+
                 conn.commit()
-                if report_dir_path:
-                    _write_non_e621_prefix_repairs_tsv(report_dir_path, non_e621_prefix_repairs)
-            logger.info(f"[Phase 1] Imported {len(df_tags)} tags from tags_v4.db")
+                non_e621_prefix_repairs = _repair_non_e621_prefix_preferred(conn)
+                if non_e621_prefix_repairs:
+                    conn.commit()
+                    if report_dir_path:
+                        _write_non_e621_prefix_repairs_tsv(report_dir_path, non_e621_prefix_repairs)
+                source_effects.append(
+                    {
+                        "source": tags_v4_path.relative_to(sources_dir).as_posix(),
+                        "action": "imported",
+                        "rows_read": int(df_tags.height),
+                        "db_changes": int(conn.total_changes - changes_before),
+                        "note": "tags_v4.db base import",
+                    }
+                )
+                logger.info(f"[Phase 1] Imported {len(df_tags)} tags from tags_v4.db")
 
-            # 次のtag_id初期値を設定
+                # 次のtag_id初期値を設定
+                cursor = conn.execute("SELECT MAX(tag_id) FROM TAGS")
+                max_tag_id = cursor.fetchone()[0]
+                next_tag_id = (max_tag_id or 0) + 1
+            else:
+                logger.warning("[Phase 1] tags_v4.db not found, starting from empty")
+                next_tag_id = 1
+                existing_tags = set()
+                source_effects.append(
+                    {
+                        "source": "tags_v4.db",
+                        "action": "missing",
+                        "rows_read": 0,
+                        "db_changes": 0,
+                        "note": "tags_v4.db not found",
+                    }
+                )
+
+            # tag_id -> tag のマッピング（後続のTAG_STATUS/USAGE登録で使用）
+            cursor = conn.execute("SELECT tag_id, tag FROM TAGS")
+            tags_mapping: dict[str, int] = {row[1]: row[0] for row in cursor.fetchall()}
+
+        else:
+            # Phase 1 スキップ: 既存DBからtags_mapping等を読み取り
+            logger.info("[Phase 1] Skipped (base_db_path specified). Loading existing tags from base DB.")
+            cursor = conn.execute("SELECT tag FROM TAGS")
+            existing_tags: set[str] = {row[0] for row in cursor.fetchall()}
             cursor = conn.execute("SELECT MAX(tag_id) FROM TAGS")
             max_tag_id = cursor.fetchone()[0]
             next_tag_id = (max_tag_id or 0) + 1
-        else:
-            if skip_tags_v4:
-                logger.warning("[Phase 1] tags_v4.db import skipped, starting from empty")
-            else:
-                logger.warning("[Phase 1] tags_v4.db not found, starting from empty")
-            next_tag_id = 1
-            existing_tags = set()
-
-        # tag_id -> tag のマッピング（後続のTAG_STATUS/USAGE登録で使用）
-        cursor = conn.execute("SELECT tag_id, tag FROM TAGS")
-        tags_mapping: dict[str, int] = {row[1]: row[0] for row in cursor.fetchall()}
+            cursor = conn.execute("SELECT tag_id, tag FROM TAGS")
+            tags_mapping: dict[str, int] = {row[1]: row[0] for row in cursor.fetchall()}
+            source_effects.append(
+                {
+                    "source": "base_db",
+                    "action": "loaded",
+                    "rows_read": len(existing_tags),
+                    "db_changes": 0,
+                    "note": "loaded from base database",
+                }
+            )
 
         # Phase 1.5: Hugging Face datasets から翻訳（日本語）を取り込む（任意）
         if hf_ja_translation_datasets:
-            logger.info(f"[Phase 1.5] Importing HF JA translations: {len(hf_ja_translation_datasets)} dataset(s)")
+            logger.info(
+                f"[Phase 1.5] Importing HF JA translations: {len(hf_ja_translation_datasets)} dataset(s)"
+            )
             for repo_id in hf_ja_translation_datasets:
                 source_name = f"hf://datasets/{repo_id}"
+                changes_before = conn.total_changes
                 try:
                     df_hf = P1atdevDanbooruJaTagPairAdapter(repo_id).read()
                 except Exception as e:
                     logger.warning(f"[Phase 1.5] Failed to load translations from {source_name}: {e}")
+                    source_effects.append(
+                        {
+                            "source": source_name,
+                            "action": "read_failed",
+                            "rows_read": 0,
+                            "db_changes": 0,
+                            "note": str(e),
+                        }
+                    )
                     continue
 
                 trans_rows = _extract_translations(df_hf, tags_mapping)
                 if not trans_rows:
-                    logger.warning(f"[Phase 1.5] No translations extracted from {source_name} (tags not found?)")
+                    logger.warning(
+                        f"[Phase 1.5] No translations extracted from {source_name} (tags not found?)"
+                    )
                     continue
 
                 for tag_id, language, translation in trans_rows:
@@ -1822,6 +1947,15 @@ def build_dataset(
                             f"Failed to insert translation: tag_id={tag_id}, lang={language}, trans={translation} ({e})"
                         )
                 conn.commit()
+                source_effects.append(
+                    {
+                        "source": source_name,
+                        "action": "imported",
+                        "rows_read": int(len(trans_rows)),
+                        "db_changes": int(conn.total_changes - changes_before),
+                        "note": "hf_ja_translation",
+                    }
+                )
                 logger.info(f"[Phase 1.5] Imported translations: {source_name} (rows={len(trans_rows)})")
 
         # Phase 2: CSV ソースから追加データを取り込み
@@ -1834,7 +1968,17 @@ def build_dataset(
             # CSV ファイルを再帰的に検索（昇順でソート → 再現性確保）
             csv_files = sorted(csv_dir.rglob("*.csv"))
             logger.info(f"[Phase 2] Found {len(csv_files)} CSV files")
-            danbooru_snapshot = _select_latest_count_snapshot(csv_files)
+
+            # Danbooruスナップショット検出（skip_danbooru_snapshot_replace が True の場合はスキップ）
+            if skip_danbooru_snapshot_replace:
+                logger.info(
+                    "[Phase 2] Danbooru snapshot replacement is disabled "
+                    "(skip_danbooru_snapshot_replace=True)"
+                )
+                danbooru_snapshot = None
+            else:
+                danbooru_snapshot = _select_latest_count_snapshot(csv_files)
+
             has_authoritative_danbooru_counts = danbooru_snapshot is not None
             danbooru_snapshot_path: Path | None = danbooru_snapshot[0] if danbooru_snapshot else None
             danbooru_snapshot_ts: str | None = danbooru_snapshot[1] if danbooru_snapshot else None
@@ -1848,7 +1992,9 @@ def build_dataset(
 
             for csv_path in csv_files:
                 source_name = csv_path.relative_to(sources_dir).as_posix()
-                is_authoritative_counts = danbooru_snapshot_path is not None and csv_path == danbooru_snapshot_path
+                is_authoritative_counts = (
+                    danbooru_snapshot_path is not None and csv_path == danbooru_snapshot_path
+                )
 
                 if not _should_include_source(
                     source_name,
@@ -1858,11 +2004,25 @@ def build_dataset(
                     exclude_patterns=exclude_patterns,
                 ):
                     skipped.append((source_name, "filtered"))
+                    source_effects.append(
+                        {
+                            "source": source_name,
+                            "action": "filtered",
+                            "rows_read": 0,
+                            "db_changes": 0,
+                            "note": "source filter",
+                        }
+                    )
                     continue
 
                 # translation source 検出（language列の存在チェック）
+                changes_before = conn.total_changes
                 try:
-                    unknown_dir = report_dir_path / "unknown" if report_dir_path else Path("reports/dataset_builder/unknown")
+                    unknown_dir = (
+                        report_dir_path / "unknown"
+                        if report_dir_path
+                        else Path("reports/dataset_builder/unknown")
+                    )
                     df = _read_csv_best_effort(
                         csv_path,
                         unknown_report_dir=unknown_dir,
@@ -1871,24 +2031,72 @@ def build_dataset(
                     )
                     if df is None:
                         skipped.append((source_name, "read_failed"))
+                        source_effects.append(
+                            {
+                                "source": source_name,
+                                "action": "read_failed",
+                                "rows_read": 0,
+                                "db_changes": 0,
+                                "note": "read_csv_best_effort returned None",
+                            }
+                        )
                         continue
                 except NormalizedSourceSkipError as e:
                     # NORMALIZED/UNKNOWN判定でスキップ
                     skipped.append((source_name, f"{e.decision}_skipped"))
-                    logger.warning(f"Skipped source: {source_name} (decision={e.decision}, signals={e.signals})")
+                    logger.warning(
+                        f"Skipped source: {source_name} (decision={e.decision}, signals={e.signals})"
+                    )
+                    source_effects.append(
+                        {
+                            "source": source_name,
+                            "action": f"{e.decision}_skipped",
+                            "rows_read": 0,
+                            "db_changes": 0,
+                            "note": "non-source tag column detected",
+                        }
+                    )
                     continue
                 except Exception as e:
                     skipped.append((source_name, f"read_error={e}"))
                     logger.error(f"Failed to read CSV: {csv_path} ({e})")
+                    source_effects.append(
+                        {
+                            "source": source_name,
+                            "action": "read_error",
+                            "rows_read": 0,
+                            "db_changes": 0,
+                            "note": str(e),
+                        }
+                    )
                     continue
 
                 # 最低限の整合性チェック
                 if "source_tag" not in df.columns:
                     skipped.append((source_name, "validation_failed"))
+                    source_effects.append(
+                        {
+                            "source": source_name,
+                            "action": "validation_failed",
+                            "rows_read": int(df.height),
+                            "db_changes": 0,
+                            "note": "missing source_tag column",
+                        }
+                    )
                     continue
 
                 # Translation source 処理（language列または言語別列を持つ場合）
-                lang_columns = {col.lower() for col in df.columns} & {"language", "japanese", "english", "chinese", "korean", "ja", "en", "zh", "ko"}
+                lang_columns = {col.lower() for col in df.columns} & {
+                    "language",
+                    "japanese",
+                    "english",
+                    "chinese",
+                    "korean",
+                    "ja",
+                    "en",
+                    "zh",
+                    "ko",
+                }
                 if lang_columns:
                     trans_rows = _extract_translations(df, tags_mapping)
                     for tag_id, language, translation in trans_rows:
@@ -1907,7 +2115,9 @@ def build_dataset(
                             f"Imported translations: {source_name} (lang={language}, rows={len(trans_rows)})"
                         )
                     else:
-                        logger.warning(f"No translations extracted from {source_name} (tags not yet registered?)")
+                        logger.warning(
+                            f"No translations extracted from {source_name} (tags not yet registered?)"
+                        )
                     continue
 
                 if "source_tag" not in df.columns and "tag" in df.columns:
@@ -1938,7 +2148,9 @@ def build_dataset(
                 if "deprecated_tags" not in df.columns:
                     df = df.with_columns(pl.lit("").alias("deprecated_tags"))
                 else:
-                    df = df.with_columns(pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias("deprecated_tags"))
+                    df = df.with_columns(
+                        pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias("deprecated_tags")
+                    )
 
                 # chunk 単位で: TAGS 登録 → TAG_STATUS / TAG_USAGE 登録
                 chunk_size = 50_000
@@ -1949,7 +2161,9 @@ def build_dataset(
                     candidates = list(_extract_all_tags_from_deprecated(chunk))
 
                     if candidates:
-                        new_tags_df = merge_tags(existing_tags, pl.DataFrame({"source_tag": candidates}), next_tag_id)
+                        new_tags_df = merge_tags(
+                            existing_tags, pl.DataFrame({"source_tag": candidates}), next_tag_id
+                        )
                         if len(new_tags_df) > 0:
                             for row in new_tags_df.to_dicts():
                                 conn.execute(
@@ -1960,7 +2174,9 @@ def build_dataset(
 
                             added_tags = new_tags_df["tag"].to_list()
                             existing_tags.update(added_tags)
-                            tags_mapping.update(dict(zip(new_tags_df["tag"].to_list(), new_tags_df["tag_id"].to_list())))
+                            tags_mapping.update(
+                                dict(zip(new_tags_df["tag"].to_list(), new_tags_df["tag_id"].to_list()))
+                            )
                             next_tag_id = int(new_tags_df["tag_id"].max()) + 1
 
                     # 2) TAG_STATUS / TAG_USAGE
@@ -1994,7 +2210,13 @@ def build_dataset(
                             tags_mapping=tags_mapping,
                         ):
                             st_rows.append(
-                                (rec["tag_id"], rec["format_id"], tid_i, rec["alias"], rec["preferred_tag_id"])
+                                (
+                                    rec["tag_id"],
+                                    rec["format_id"],
+                                    tid_i,
+                                    rec["alias"],
+                                    rec["preferred_tag_id"],
+                                )
                             )
 
                         # usage (canonical のみ)
@@ -2021,7 +2243,7 @@ def build_dataset(
 
                     if st_rows:
                         conn.executemany(
-                            "INSERT OR REPLACE INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id) VALUES (?, ?, ?, ?, ?)",
+                            _TAG_STATUS_UPSERT_IF_CHANGED_SQL,
                             st_rows,
                         )
                         conn.commit()
@@ -2035,34 +2257,54 @@ def build_dataset(
                                     if format_id != 1:
                                         continue
                                     prev = danbooru_snapshot_counts.get(tag_id)
-                                    danbooru_snapshot_counts[tag_id] = count if prev is None else max(prev, count)
+                                    danbooru_snapshot_counts[tag_id] = (
+                                        count if prev is None else max(prev, count)
+                                    )
                             else:
                                 # 日付が取れない場合は、従来通り max マージにフォールバックする
                                 for tag_id, format_id, count in usage_rows:
                                     conn.execute(
-                                        "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count) VALUES (?, ?, ?) "
-                                        "ON CONFLICT(tag_id, format_id) DO UPDATE SET count = MAX(count, excluded.count)",
+                                        _TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL,
                                         (tag_id, format_id, count),
                                     )
                                 conn.commit()
                         else:
                             for tag_id, format_id, count in usage_rows:
                                 conn.execute(
-                                    "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count) VALUES (?, ?, ?) "
-                                    "ON CONFLICT(tag_id, format_id) DO UPDATE SET count = MAX(count, excluded.count)",
+                                    _TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL,
                                     (tag_id, format_id, count),
                                 )
                             conn.commit()
 
                 logger.info(f"Imported CSV: {source_name} ({len(df)} rows)")
+                source_effects.append(
+                    {
+                        "source": source_name,
+                        "action": "imported",
+                        "rows_read": int(df.height),
+                        "db_changes": int(conn.total_changes - changes_before),
+                        "note": "",
+                    }
+                )
 
             # Danbooru の最新スナップショットがある場合は format_id=1 の usage counts を置換する。
             if danbooru_snapshot_path and danbooru_snapshot_ts and danbooru_snapshot_counts:
+                snapshot_source = danbooru_snapshot_path.relative_to(sources_dir).as_posix()
+                changes_before = conn.total_changes
                 _replace_usage_counts_for_format(
                     conn,
                     format_id=1,
                     counts_by_tag_id=danbooru_snapshot_counts,
                     timestamp=danbooru_snapshot_ts,
+                )
+                source_effects.append(
+                    {
+                        "source": snapshot_source,
+                        "action": "usage_counts_replaced",
+                        "rows_read": int(len(danbooru_snapshot_counts)),
+                        "db_changes": int(conn.total_changes - changes_before),
+                        "note": "authoritative danbooru snapshot",
+                    }
                 )
 
         # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
@@ -2081,7 +2323,10 @@ def build_dataset(
         conn = sqlite3.connect(output_path)
         apply_connection_pragmas(conn, profile="build")
         placeholder_repairs = _repair_placeholder_tag_ids(conn)
-        conn.execute("INSERT INTO DATABASE_METADATA (key, value) VALUES ('version', ?)", (version,))
+        conn.execute(
+            "INSERT OR REPLACE INTO DATABASE_METADATA (key, value) VALUES ('version', ?)",
+            (version,),
+        )
         conn.commit()
 
         logger.info(f"[COMPLETE] Dataset built successfully: {output_path}")
@@ -2094,6 +2339,7 @@ def build_dataset(
                 writer.writerow(["source", "reason"])
                 writer.writerows(skipped)
             logger.info(f"Skipped sources report: {skipped_report} ({len(skipped)} sources)")
+            _write_source_effects_tsv(report_dir_path / "source_effects.tsv", source_effects)
 
         # tags_v4 の不整合救済レポート出力（手動修正用）
         if created_missing_tags and report_dir_path:
@@ -2221,15 +2467,27 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--skip-tags-v4",
-        action="store_true",
-        help="Skip importing tags_v4.db (useful for license-separated builds).",
-    )
-    parser.add_argument(
         "--parquet-dir",
         type=Path,
         default=None,
         help="Optional Parquet output directory (HF Dataset Viewer-friendly view tables).",
+    )
+    parser.add_argument(
+        "--base-db",
+        type=Path,
+        default=None,
+        help=(
+            "Base database to copy and build upon (skips Phase 0/1). "
+            "Used for MIT version build that extends CC0 version."
+        ),
+    )
+    parser.add_argument(
+        "--skip-danbooru-snapshot-replace",
+        action="store_true",
+        help=(
+            "Skip Danbooru snapshot replacement (used for MIT version "
+            "where CC0 version already applied the snapshot)."
+        ),
     )
     parser.add_argument(
         "--overwrite",
@@ -2247,9 +2505,10 @@ def main() -> None:
         overrides_path=args.overrides,
         include_sources_path=args.include_sources,
         exclude_sources_path=args.exclude_sources,
-        skip_tags_v4=args.skip_tags_v4,
         hf_ja_translation_datasets=args.hf_ja_translation,
         parquet_output_dir=args.parquet_dir,
+        base_db_path=args.base_db,
+        skip_danbooru_snapshot_replace=args.skip_danbooru_snapshot_replace,
         overwrite=args.overwrite,
     )
 

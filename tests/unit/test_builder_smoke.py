@@ -84,17 +84,13 @@ def test_builder_builds_minimal_db(tmp_path: Path) -> None:
 
     # tag source: adds new tag and alias
     (csv_root / "danbooru.csv").write_text(
-        "source_tag,type_id,format_id,deprecated_tags,count\n"
-        "Witch,0,1,sorceress,11\n"
-        "new_tag,0,1,,1\n",
+        "source_tag,type_id,format_id,deprecated_tags,count\nWitch,0,1,sorceress,11\nnew_tag,0,1,,1\n",
         encoding="utf-8",
     )
 
     # conflicting count (same tag/format) -> max is chosen
     (csv_root / "e621.csv").write_text(
-        "source_tag,type_id,format_id,deprecated_tags,count\n"
-        "witch,0,2,,5\n"
-        "witch,0,2,,500\n",
+        "source_tag,type_id,format_id,deprecated_tags,count\nwitch,0,2,,5\nwitch,0,2,,500\n",
         encoding="utf-8",
     )
 
