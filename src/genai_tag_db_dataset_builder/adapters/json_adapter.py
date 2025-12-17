@@ -95,7 +95,6 @@ class JSON_Adapter(BaseAdapter):
 
         return df
 
-
     def _export_unknown_column_report(
         self,
         source_path: Path,

@@ -74,4 +74,3 @@ def test_export_danbooru_view_parquet_creates_expected_columns(tmp_path: Path) -
     assert row["deprecated_tags"] == ["nekomimi"]
     assert row["lang_ja"] == ["猫耳", "ねこみみ"]
     assert row["lang_zh"] == ["猫耳"]
-

@@ -56,6 +56,7 @@ def apply_connection_pragmas(conn: sqlite3.Connection, *, profile: str) -> None:
     for pragma in pragmas:
         conn.execute(pragma)
 
+
 # 必須インデックス（想定クエリに基づく）
 REQUIRED_INDEXES = [
     # TAGS検索用（部分一致・完全一致）

@@ -48,4 +48,3 @@ def test_replace_usage_counts_for_format_replaces_only_target_format(tmp_path: P
         ]
     finally:
         conn.close()
-

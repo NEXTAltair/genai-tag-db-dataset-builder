@@ -73,4 +73,3 @@ def test_usage_counts_upsert_updates_only_if_greater(tmp_path: Path) -> None:
         assert after_higher > after_first
     finally:
         conn.close()
-

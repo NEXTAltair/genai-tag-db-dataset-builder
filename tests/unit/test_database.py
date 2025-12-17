@@ -198,7 +198,10 @@ class TestSchemaCompatibility:
         try:
             for table, expected_columns in expected.items():
                 rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
-                got = [(name, col_type.upper(), bool(notnull), bool(pk)) for _, name, col_type, notnull, _, pk in rows]
+                got = [
+                    (name, col_type.upper(), bool(notnull), bool(pk))
+                    for _, name, col_type, notnull, _, pk in rows
+                ]
                 assert got == expected_columns
         finally:
             conn.close()

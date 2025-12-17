@@ -860,9 +860,7 @@ def _load_column_values_from_csv(
     report_dir_path: Path | None,
 ) -> list[str]:
     unknown_dir = (
-        report_dir_path / "unknown"
-        if report_dir_path
-        else Path("reports/dataset_builder/unknown")
+        report_dir_path / "unknown" if report_dir_path else Path("reports/dataset_builder/unknown")
     )
     df = _read_csv_best_effort(
         csv_path,
@@ -878,10 +876,7 @@ def _load_column_values_from_csv(
     # None/空は除外してユニーク化
     try:
         values = (
-            df.select(pl.col(column_name).cast(pl.Utf8, strict=False))
-            .to_series()
-            .drop_nulls()
-            .to_list()
+            df.select(pl.col(column_name).cast(pl.Utf8, strict=False)).to_series().drop_nulls().to_list()
         )
     except Exception:
         return []
@@ -2594,7 +2589,9 @@ def build_dataset(
                     f"[Cleanup] Deleted {deleted} translations lacking required script for {lang}"
                 )
             if total_deleted:
-                logger.warning(f"[Cleanup] Total deleted translations (required script filter): {total_deleted}")
+                logger.warning(
+                    f"[Cleanup] Total deleted translations (required script filter): {total_deleted}"
+                )
 
         # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
         _repair_missing_type_format_mapping(conn, report_dir=report_dir_path if report_dir_path else None)
