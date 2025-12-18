@@ -23,11 +23,11 @@ def test_tag_status_upsert_is_idempotent(tmp_path: Path) -> None:
         conn.commit()
 
         before = conn.total_changes
-        conn.execute(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, (1, 1, 0, 0, 1))
+        conn.execute(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, (1, 1, 0, 0, 1, 0, None, None))
         conn.commit()
         after_first = conn.total_changes
 
-        conn.execute(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, (1, 1, 0, 0, 1))
+        conn.execute(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, (1, 1, 0, 0, 1, 0, None, None))
         conn.commit()
         after_second = conn.total_changes
 
@@ -51,19 +51,19 @@ def test_usage_counts_upsert_updates_only_if_greater(tmp_path: Path) -> None:
         conn.commit()
 
         before = conn.total_changes
-        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 10))
+        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 10, None, None))
         conn.commit()
         after_first = conn.total_changes
 
-        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 10))
+        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 10, None, None))
         conn.commit()
         after_equal = conn.total_changes
 
-        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 9))
+        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 9, None, None))
         conn.commit()
         after_lower = conn.total_changes
 
-        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 11))
+        conn.execute(_TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL, (1, 1, 11, None, None))
         conn.commit()
         after_higher = conn.total_changes
 

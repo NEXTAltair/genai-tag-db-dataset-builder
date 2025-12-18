@@ -22,6 +22,7 @@ import polars as pl
 
 from genai_tag_db_dataset_builder.adapters.csv_adapter import CSV_Adapter
 from genai_tag_db_dataset_builder.adapters.hf_translation_adapter import P1atdevDanbooruJaTagPairAdapter
+from genai_tag_db_dataset_builder.adapters.site_tags_adapter import SiteTagsAdapter
 from genai_tag_db_dataset_builder.adapters.tags_v4_adapter import Tags_v4_Adapter
 from genai_tag_db_dataset_builder.core.database import (
     apply_connection_pragmas,
@@ -148,8 +149,40 @@ def _infer_language_code(column_name: str) -> str:
     """
     col_lower = column_name.lower()
 
+    # deepghs/site_tags 系: trans_zh-CN / trans_zh-HK など（列名がそのまま言語コードを含む）
+    if col_lower.startswith("trans_"):
+        # 元の大小をなるべく維持する（zh-CN など）
+        return column_name[len("trans_") :]
+
+    # deepghs/site_tags 系: tag_jp / tag_ru のような suffix 形式
+    if col_lower.endswith("_jp"):
+        return "ja"
+    if col_lower.endswith("_ja"):
+        return "ja"
+    if col_lower.endswith("_ru"):
+        return "ru"
+    if col_lower.endswith("_ko"):
+        return "ko"
+    if col_lower.endswith("_zh"):
+        return "zh"
+
     # 直接言語コードの場合
-    if col_lower in {"ja", "en", "zh", "ko", "fr", "de", "es", "ru"}:
+    if col_lower in {
+        "ja",
+        "en",
+        "zh",
+        "ko",
+        "fr",
+        "de",
+        "es",
+        "ru",
+        "pt",
+        "it",
+        "vi",
+        "th",
+        "zh-cn",
+        "zh-hk",
+    }:
         return col_lower
 
     # 言語名からコードに変換
@@ -218,6 +251,32 @@ def _infer_format_id(path: Path) -> int:
     if "derpibooru" in name:
         return 3
     return 0
+
+
+_SITE_TAGS_SITE_TO_FORMAT_ID: dict[str, int] = {
+    "anime-pictures.net": 14,
+    "booru.allthefallen.moe": 5,
+    "chan.sankakucomplex.com": 6,  # sankaku
+    "danbooru.donmai.us": 1,
+    "e621.net": 2,
+    "en.pixiv.net": 18,  # pixiv
+    "gelbooru.com": 7,
+    "hypnohub.net": 10,
+    "konachan.com": 11,
+    "konachan.net": 12,
+    "lolibooru.moe": 13,
+    "pixiv.net": 18,
+    "rule34.xxx": 8,
+    "safebooru.donmai.us": 4,
+    "wallhaven.cc": 15,
+    "xbooru.com": 9,
+    "yande.re": 16,
+    "zerochan.net": 17,
+}
+
+
+def _infer_site_tags_format_id(site_dir_name: str) -> int:
+    return _SITE_TAGS_SITE_TO_FORMAT_ID.get(site_dir_name, 0)
 
 
 def _infer_repair_mode(path: Path) -> str | None:
@@ -951,24 +1010,41 @@ def _write_source_effects_tsv(path: Path, effects: list[dict[str, object]]) -> N
 
 
 _TAG_STATUS_UPSERT_IF_CHANGED_SQL = """
-INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO TAG_STATUS (
+  tag_id,
+  format_id,
+  type_id,
+  alias,
+  preferred_tag_id,
+  deprecated,
+  deprecated_at,
+  source_created_at
+)
+VALUES (?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
 ON CONFLICT(tag_id, format_id) DO UPDATE SET
   type_id = excluded.type_id,
   alias = excluded.alias,
   preferred_tag_id = excluded.preferred_tag_id,
+  deprecated = excluded.deprecated,
+  deprecated_at = excluded.deprecated_at,
+  source_created_at = excluded.source_created_at,
   updated_at = CURRENT_TIMESTAMP
 WHERE
   TAG_STATUS.type_id IS NOT excluded.type_id
   OR TAG_STATUS.alias IS NOT excluded.alias
-  OR TAG_STATUS.preferred_tag_id IS NOT excluded.preferred_tag_id;
+  OR TAG_STATUS.preferred_tag_id IS NOT excluded.preferred_tag_id
+  OR TAG_STATUS.deprecated IS NOT excluded.deprecated
+  OR TAG_STATUS.deprecated_at IS NOT excluded.deprecated_at
+  OR TAG_STATUS.source_created_at IS NOT excluded.source_created_at;
 """.strip()
 
 _TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL = """
-INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count)
-VALUES (?, ?, ?)
+INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count, created_at, updated_at)
+VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
 ON CONFLICT(tag_id, format_id) DO UPDATE SET
-  count = excluded.count
+  count = excluded.count,
+  created_at = excluded.created_at,
+  updated_at = excluded.updated_at
 WHERE
   excluded.count > TAG_USAGE_COUNTS.count;
 """.strip()
@@ -2376,8 +2452,8 @@ def build_dataset(
                             next_tag_id = int(new_tags_df["tag_id"].max()) + 1
 
                     # 2) TAG_STATUS / TAG_USAGE
-                    st_rows: list[tuple[int, int, int, int, int]] = []
-                    usage_rows: list[tuple[int, int, int]] = []
+                    st_rows: list[tuple[int, int, int, int, int, int, str | None, str | None]] = []
+                    usage_rows: list[tuple[int, int, int, str | None]] = []
                     logged_invalid_count = False
 
                     source_tags = chunk["source_tag"].to_list()
@@ -2405,6 +2481,9 @@ def build_dataset(
                             format_id=fmt_i,
                             tags_mapping=tags_mapping,
                         ):
+                            # 既存CSV運用では「alias=true のタグ」は deprecated とみなしてよい（推奨先に誘導するため）。
+                            # canonical 自身は deprecated=0（site_tags 等のソースが入った場合は別処理で上書きされる）
+                            deprecated_i = 1 if rec["alias"] else 0
                             st_rows.append(
                                 (
                                     rec["tag_id"],
@@ -2412,6 +2491,9 @@ def build_dataset(
                                     tid_i,
                                     rec["alias"],
                                     rec["preferred_tag_id"],
+                                    deprecated_i,
+                                    None,  # deprecated_at (unknown)
+                                    None,  # source_created_at (unknown)
                                 )
                             )
 
@@ -2435,7 +2517,7 @@ def build_dataset(
                                 and not is_authoritative_counts
                             ):
                                 continue
-                            usage_rows.append((canonical_tag_id, fmt_i, count_i))
+                            usage_rows.append((canonical_tag_id, fmt_i, count_i, None))
 
                     if st_rows:
                         conn.executemany(
@@ -2449,7 +2531,7 @@ def build_dataset(
                             # 最新スナップショットは「format_id=1 の TAG_USAGE_COUNTS を置換」する。
                             # ここでは蓄積だけ行い、最後に DELETE→INSERT で timestamp も統一する。
                             if danbooru_snapshot_ts:
-                                for tag_id, format_id, count in usage_rows:
+                                for tag_id, format_id, count, _ts in usage_rows:
                                     if format_id != 1:
                                         continue
                                     prev = danbooru_snapshot_counts.get(tag_id)
@@ -2458,17 +2540,17 @@ def build_dataset(
                                     )
                             else:
                                 # 日付が取れない場合は、従来通り max マージにフォールバックする
-                                for tag_id, format_id, count in usage_rows:
+                                for tag_id, format_id, count, ts in usage_rows:
                                     conn.execute(
                                         _TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL,
-                                        (tag_id, format_id, count),
+                                        (tag_id, format_id, count, ts, ts),
                                     )
                                 conn.commit()
                         else:
-                            for tag_id, format_id, count in usage_rows:
+                            for tag_id, format_id, count, ts in usage_rows:
                                 conn.execute(
                                     _TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL,
-                                    (tag_id, format_id, count),
+                                    (tag_id, format_id, count, ts, ts),
                                 )
                             conn.commit()
 
@@ -2482,6 +2564,219 @@ def build_dataset(
                         "note": "",
                     }
                 )
+
+            # deepghs/site_tags (CC-BY-4.0) 統合
+            site_tags_root = sources_dir / "external_sources" / "site_tags"
+            if site_tags_root.exists() and site_tags_root.is_dir():
+                sqlite_files = sorted(site_tags_root.glob("*/tags.sqlite"))
+                if sqlite_files:
+                    logger.info(
+                        f"[Phase 2] Importing deepghs/site_tags: {len(sqlite_files)} sqlite(s) under {site_tags_root}"
+                    )
+
+                for sqlite_path in sqlite_files:
+                    source_name = sqlite_path.relative_to(sources_dir).as_posix()
+                    if not _should_include_source(
+                        source_name,
+                        include_exact=include_exact,
+                        include_patterns=include_patterns,
+                        exclude_exact=exclude_exact,
+                        exclude_patterns=exclude_patterns,
+                    ):
+                        skipped.append((source_name, "filtered"))
+                        source_effects.append(
+                            {
+                                "source": source_name,
+                                "action": "filtered",
+                                "rows_read": 0,
+                                "db_changes": 0,
+                                "note": "source filter",
+                            }
+                        )
+                        continue
+
+                    format_id = _infer_site_tags_format_id(sqlite_path.parent.name)
+                    if format_id == 0:
+                        skipped.append((source_name, "unknown_site_format"))
+                        source_effects.append(
+                            {
+                                "source": source_name,
+                                "action": "validation_failed",
+                                "rows_read": 0,
+                                "db_changes": 0,
+                                "note": f"unknown site dir: {sqlite_path.parent.name}",
+                            }
+                        )
+                        continue
+
+                    changes_before = conn.total_changes
+                    rows_read_total = 0
+                    translation_rows_total = 0
+
+                    adapter = SiteTagsAdapter(sqlite_path, format_id=format_id)
+                    for chunk in adapter.iter_chunks(chunk_size=50_000):
+                        df = chunk.df
+                        rows_read_total += int(df.height)
+
+                        if "source_tag" not in df.columns:
+                            continue
+
+                        # 必須/補助列の付与（欠損は既定値）
+                        df = df.with_columns(pl.lit(format_id).cast(pl.Int64).alias("format_id"))
+                        if "type_id" not in df.columns:
+                            df = df.with_columns(pl.lit(-1).cast(pl.Int64).alias("type_id"))
+                        else:
+                            df = df.with_columns(
+                                pl.col("type_id").cast(pl.Int64, strict=False).fill_null(-1).alias("type_id")
+                            )
+                        if "deprecated_tags" not in df.columns:
+                            df = df.with_columns(pl.lit("").alias("deprecated_tags"))
+                        else:
+                            df = df.with_columns(
+                                pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias("deprecated_tags")
+                            )
+                        if "deprecated" not in df.columns:
+                            df = df.with_columns(pl.lit(0).cast(pl.Int64).alias("deprecated"))
+                        else:
+                            df = df.with_columns(
+                                pl.col("deprecated").cast(pl.Int64, strict=False).fill_null(0).alias("deprecated")
+                            )
+                        if "deprecated_at" not in df.columns:
+                            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("deprecated_at"))
+                        if "source_created_at" not in df.columns:
+                            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("source_created_at"))
+                        if "source_updated_at" not in df.columns:
+                            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("source_updated_at"))
+
+                        # 1) TAGS 登録（source_tag + deprecated_tags）
+                        candidates = list(_extract_all_tags_from_deprecated(df))
+                        if candidates:
+                            new_tags_df = merge_tags(
+                                existing_tags, pl.DataFrame({"source_tag": candidates}), next_tag_id
+                            )
+                            if len(new_tags_df) > 0:
+                                for row in new_tags_df.to_dicts():
+                                    conn.execute(
+                                        "INSERT INTO TAGS (tag_id, tag, source_tag) VALUES (?, ?, ?)",
+                                        (row["tag_id"], row["tag"], row["source_tag"]),
+                                    )
+                                conn.commit()
+                                added_tags = new_tags_df["tag"].to_list()
+                                existing_tags.update(added_tags)
+                                tags_mapping.update(
+                                    dict(
+                                        zip(
+                                            new_tags_df["tag"].to_list(),
+                                            new_tags_df["tag_id"].to_list(),
+                                        )
+                                    )
+                                )
+                                next_tag_id = int(new_tags_df["tag_id"].max()) + 1
+
+                        # 2) TAG_STATUS / TAG_USAGE / TAG_TRANSLATIONS
+                        st_rows: list[tuple[int, int, int, int, int, int, str | None, str | None]] = []
+                        usage_rows: list[tuple[int, int, int, str | None]] = []
+
+                        source_tags = df["source_tag"].to_list()
+                        deprecated_list = df["deprecated_tags"].to_list()
+                        format_ids = df["format_id"].to_list()
+                        type_ids = df["type_id"].to_list()
+                        deprecated_flags = df["deprecated"].to_list()
+                        created_ats = df["source_created_at"].to_list()
+                        updated_ats = df["source_updated_at"].to_list()
+                        counts = df["count"].to_list() if "count" in df.columns else [None] * len(df)
+
+                        for raw_source_tag, dep, fmt, tid, dep_flag, src_created_at, src_updated_at, cnt in zip(
+                            source_tags,
+                            deprecated_list,
+                            format_ids,
+                            type_ids,
+                            deprecated_flags,
+                            created_ats,
+                            updated_ats,
+                            counts,
+                        ):
+                            canonical_tag = normalize_tag(str(raw_source_tag))
+                            canonical_tag_id = tags_mapping.get(canonical_tag)
+                            if canonical_tag_id is None:
+                                continue
+
+                            fmt_i = int(fmt)
+                            tid_i = int(tid) if tid is not None else -1
+                            canonical_deprecated = 1 if dep_flag else 0
+                            canonical_source_created_at = (
+                                str(src_created_at) if src_created_at is not None and str(src_created_at).strip() else None
+                            )
+                            canonical_source_updated_at = (
+                                str(src_updated_at) if src_updated_at is not None and str(src_updated_at).strip() else None
+                            )
+
+                            for rec in process_deprecated_tags(
+                                canonical_tag=canonical_tag,
+                                deprecated_tags=str(dep) if dep is not None else "",
+                                format_id=fmt_i,
+                                tags_mapping=tags_mapping,
+                            ):
+                                is_alias = 1 if rec["alias"] else 0
+                                st_rows.append(
+                                    (
+                                        rec["tag_id"],
+                                        rec["format_id"],
+                                        tid_i,
+                                        rec["alias"],
+                                        rec["preferred_tag_id"],
+                                        1 if is_alias else canonical_deprecated,
+                                        None,  # deprecated_at（不明ならNULL）
+                                        canonical_source_created_at if not is_alias else None,
+                                    )
+                                )
+
+                            # usage (canonical のみ)
+                            if cnt is not None:
+                                try:
+                                    count_i = int(cnt)
+                                except (TypeError, ValueError):
+                                    continue
+                                usage_rows.append((canonical_tag_id, fmt_i, count_i, canonical_source_updated_at))
+
+                        if st_rows:
+                            conn.executemany(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, st_rows)
+                            conn.commit()
+
+                        if usage_rows:
+                            for tag_id, fmt_i, count_i, ts in usage_rows:
+                                conn.execute(
+                                    _TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL,
+                                    (tag_id, fmt_i, count_i, ts, ts),
+                                )
+                            conn.commit()
+
+                        # translations（存在する言語を全て）
+                        present_lang_cols = [c for c in chunk.translation_columns if c in df.columns]
+                        if present_lang_cols:
+                            df_trans = df.select(["source_tag", *present_lang_cols])
+                            trans_rows = _extract_translations(df_trans, tags_mapping)
+                            if trans_rows:
+                                for tag_id, language, translation in trans_rows:
+                                    conn.execute(
+                                        "INSERT OR IGNORE INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+                                        (tag_id, language, translation),
+                                    )
+                                conn.commit()
+                                translation_rows_total += len(trans_rows)
+
+                    logger.info(
+                        f"Imported site_tags: {source_name} (rows={rows_read_total}, translations={translation_rows_total})"
+                    )
+                    source_effects.append(
+                        {
+                            "source": source_name,
+                            "action": "imported",
+                            "rows_read": int(rows_read_total),
+                            "db_changes": int(conn.total_changes - changes_before),
+                            "note": "site_tags",
+                        }
+                    )
 
             # Danbooru の最新スナップショットがある場合は format_id=1 の usage counts を置換する。
             if danbooru_snapshot_path and danbooru_snapshot_ts and danbooru_snapshot_counts:
