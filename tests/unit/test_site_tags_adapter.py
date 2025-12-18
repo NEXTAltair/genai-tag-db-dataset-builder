@@ -115,3 +115,77 @@ def test_site_tags_adapter_e621_invalid_sink_becomes_deprecated_tag_row(tmp_path
     assert invalid_rows[0]["deprecated"] == 1
     assert invalid_rows[0]["type_id"] == 6  # e621 invalid category
 
+
+def test_site_tags_adapter_sankaku_sparse_translation_columns_are_not_dropped(
+    tmp_path: Path,
+) -> None:
+    """低頻度の翻訳列（例: trans_zh-CN）が chunk 内に存在しても落ちないこと."""
+    db = tmp_path / "tags.sqlite"
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE tags (
+              "index" INTEGER,
+              "id" INTEGER,
+              "name" TEXT,
+              "type" INTEGER,
+              "post_count" INTEGER,
+              "pool_count" INTEGER,
+              "series_count" INTEGER,
+              "trans_en" TEXT,
+              "trans_zh-CN" TEXT
+            );
+            """
+        )
+        # 先頭100行には trans_zh-CN を入れない（Polarsの既定推定長で落ちやすい）
+        for i in range(150):
+            conn.execute(
+                "INSERT INTO tags (id, name, type, post_count, pool_count, series_count, trans_en, \"trans_zh-CN\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (i, f"tag_{i}", 0, 1, 0, 0, f"en_{i}", None),
+            )
+        # 後半にのみ trans_zh-CN が入る
+        conn.execute(
+            "INSERT INTO tags (id, name, type, post_count, pool_count, series_count, trans_en, \"trans_zh-CN\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (999, "rape", 0, 0, 0, 0, "rape", "強姦"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    adapter = SiteTagsAdapter(db, format_id=6)
+    df = _collect_all_chunks(adapter)
+
+    assert "zh-CN" in df.columns
+    row = df.filter(pl.col("source_tag") == "rape")
+    assert row.height == 1
+    assert row["zh-CN"][0] == "強姦"
+
+
+def test_site_tags_adapter_negative_count_is_treated_as_missing(tmp_path: Path) -> None:
+    db = tmp_path / "tags.sqlite"
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE tags (
+              "name" TEXT,
+              "post_count" INTEGER,
+              "category" INTEGER
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO tags (name, post_count, category) VALUES (?, ?, ?)",
+            ("neg_count", -10, 0),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    adapter = SiteTagsAdapter(db, format_id=2)
+    df = _collect_all_chunks(adapter)
+
+    row = df.filter(pl.col("source_tag") == "neg_count")
+    assert row.height == 1
+    assert row["count"][0] is None

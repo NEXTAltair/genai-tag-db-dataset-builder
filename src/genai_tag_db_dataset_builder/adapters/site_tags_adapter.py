@@ -111,6 +111,16 @@ class SiteTagsAdapter(BaseAdapter):
                     count_val = raw.get(schema.count_col) if schema.count_col else None
                     type_val = raw.get(schema.type_col) if schema.type_col else None
 
+                    count_i: int | None = None
+                    if count_val is not None:
+                        try:
+                            count_i = int(count_val)
+                        except (TypeError, ValueError):
+                            count_i = None
+                        else:
+                            if count_i < 0:
+                                count_i = None
+
                     deprecated_flag = False
                     if schema.deprecated_col:
                         deprecated_flag = bool(raw.get(schema.deprecated_col))
@@ -128,7 +138,9 @@ class SiteTagsAdapter(BaseAdapter):
                         "source_tag": tag_str,
                         "format_id": self.format_id,
                         "type_id": self._map_type_value(schema, type_val),
-                        "count": int(count_val) if count_val is not None else None,
+                        # count は負値が混入するケースがある（sankaku/konachan 等）。
+                        # このDBでは負値は無効として扱い、取り込みをスキップする（None）。
+                        "count": count_i,
                         "deprecated_tags": ",".join(deprecated_by_target.get(tag_str, [])),
                         "deprecated": 1 if deprecated_flag else 0,
                         "deprecated_at": None,
@@ -148,7 +160,15 @@ class SiteTagsAdapter(BaseAdapter):
 
                     out_rows.append(out)
 
-                df = pl.DataFrame(out_rows) if out_rows else pl.DataFrame()
+                # NOTE:
+                # Polars の dicts→DataFrame 変換は既定で先頭N行だけでスキーマ推定するため、
+                # 低頻度の翻訳列（例: zh-CN / de / th など）が後半にしか出ないと列自体が落ちる。
+                # ここでは chunk 内の全行を見て推定する。
+                df = (
+                    pl.DataFrame(out_rows, infer_schema_length=None)
+                    if out_rows
+                    else pl.DataFrame()
+                )
                 if df.height:
                     yield SiteTagsChunk(df=df, translation_columns=translation_columns)
 
