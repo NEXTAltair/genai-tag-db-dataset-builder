@@ -7,7 +7,7 @@ sources:
     kind: hf_dataset
     repo_id: p1atdev/danbooru-ja-tag-pair-20241015
     license: cc0-1.0
-    applies_to: [cc0, mit, cc4]
+    applies_to: [cc0]
     data_type: translation_ja
     paths_include:
       - "data/train-*.parquet"
@@ -45,7 +45,7 @@ sources:
     kind: github
     url: https://github.com/sgmklp/tag-for-autocompletion-with-translation
     license: unspecified
-    applies_to: [cc0, mit, cc4]
+    applies_to: [cc0]
     data_type: translation_zh_cn
     paths_include:
       - "Tags-zh-full.csv"

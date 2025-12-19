@@ -144,7 +144,11 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
     hf_api = HfApi()
     revision = None
     try:
-        revision = hf_api.dataset_info(repo_id, repo_type="dataset").sha
+        try:
+            info = hf_api.dataset_info(repo_id, repo_type="dataset")
+        except TypeError:
+            info = hf_api.dataset_info(repo_id)
+        revision = info.sha
     except Exception as exc:
         logger.warning(f"Failed to resolve HF revision for {repo_id}: {exc}")
 
@@ -199,13 +203,21 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
     allow_patterns = source.get("paths_include", ["*"])
     logger.info(f"Downloading {repo_id} with patterns: {allow_patterns}")
 
-    snapshot_download(
-        repo_id=repo_id,
-        repo_type="dataset",
-        local_dir=dest,
-        allow_patterns=allow_patterns,
-        revision=revision,
-    )
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="dataset",
+            local_dir=dest,
+            allow_patterns=allow_patterns,
+            revision=revision,
+        )
+    except TypeError:
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=dest,
+            allow_patterns=allow_patterns,
+            revision=revision,
+        )
 
     if revision:
         (dest / ".hf_sha").write_text(revision, encoding="utf-8")

@@ -6,6 +6,7 @@ import argparse
 import csv
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,11 @@ from builder_ci.manifest import (
     should_rebuild,
     write_build_manifest,
 )
+_module_root = Path(__file__).resolve().parents[1]
+src_dir = _module_root / "src"
+if src_dir.exists():
+    sys.path.insert(0, str(src_dir))
+
 from genai_tag_db_dataset_builder.builder import build_dataset
 from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks
 from genai_tag_db_dataset_builder.upload import upload_to_huggingface
@@ -106,7 +112,11 @@ def _hf_translation_datasets(sources: Iterable[dict]) -> list[str]:
 
 def _download_base_db(repo_id: str, dest_dir: Path, force: bool = False) -> dict:
     api = HfApi()
-    revision = api.dataset_info(repo_id, repo_type="dataset").sha
+    try:
+        info = api.dataset_info(repo_id, repo_type="dataset")
+    except TypeError:
+        info = api.dataset_info(repo_id)
+    revision = info.sha
     sha_path = dest_dir / ".hf_sha"
 
     if dest_dir.exists() and not force:
@@ -129,13 +139,21 @@ def _download_base_db(repo_id: str, dest_dir: Path, force: bool = False) -> dict
         shutil.rmtree(dest_dir)
 
     dest_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_download(
-        repo_id=repo_id,
-        repo_type="dataset",
-        local_dir=dest_dir,
-        allow_patterns=["*.sqlite"],
-        revision=revision,
-    )
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="dataset",
+            local_dir=dest_dir,
+            allow_patterns=["*.sqlite"],
+            revision=revision,
+        )
+    except TypeError:
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=dest_dir,
+            allow_patterns=["*.sqlite"],
+            revision=revision,
+        )
     sha_path.write_text(revision, encoding="utf-8")
 
     sqlite_files = sorted(dest_dir.glob("**/*.sqlite"), key=lambda p: p.stat().st_mtime)
@@ -248,6 +266,7 @@ def _build_target(
         parquet_output_dir=target.parquet_dir,
         base_db_path=base_db_path,
         skip_danbooru_snapshot_replace=skip_danbooru_snapshot_replace,
+        warn_missing_csv_dir=False,
         overwrite=True,
     )
 
