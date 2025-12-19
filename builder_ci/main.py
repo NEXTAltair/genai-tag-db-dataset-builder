@@ -34,6 +34,7 @@ class TargetConfig:
     output_dir: Path
     output_db: Path
     parquet_dir: Path
+    report_dir: Path
     manifest_path: Path
 
 
@@ -78,7 +79,7 @@ def _fetch_sources(
 def _generate_include_filter(
     sources: list[dict],
     external_dir: Path,
-    output_dir: Path,
+    report_dir: Path,
 ) -> Path:
     lines: list[str] = []
     for src in sources:
@@ -87,8 +88,8 @@ def _generate_include_filter(
         for pattern in src.get("paths_include", []):
             lines.append(f"{external_dir.name}/{src['id']}/{pattern}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    include_path = output_dir / "include_sources.generated.txt"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    include_path = report_dir / "include_sources.generated.txt"
     include_path.write_text("\n".join(lines), encoding="utf-8")
     return include_path
 
@@ -217,7 +218,7 @@ def _build_target(
     logger.info(f"=== Build start: {target.name} ===")
 
     source_meta = _fetch_sources(sources, external_sources_dir, force=force)
-    include_path = _generate_include_filter(sources, external_sources_dir, target.output_dir)
+    include_path = _generate_include_filter(sources, external_sources_dir, target.report_dir)
     hf_ja_datasets = _hf_translation_datasets(sources)
 
     manifest_existing = load_build_manifest(target.manifest_path)
@@ -241,7 +242,7 @@ def _build_target(
         output_path=target.output_db,
         sources_dir=sources_dir,
         version=version,
-        report_dir=target.output_dir,
+        report_dir=target.report_dir,
         include_sources_path=include_path,
         hf_ja_translation_datasets=hf_ja_datasets,
         parquet_output_dir=target.parquet_dir,
@@ -250,7 +251,7 @@ def _build_target(
         overwrite=True,
     )
 
-    summary_path = run_health_checks(target.output_db, target.output_dir / "db_health")
+    summary_path = run_health_checks(target.output_db, target.report_dir / "db_health")
     summary = _load_health_summary(summary_path)
     stats, health = _health_to_manifest(summary)
 
@@ -285,7 +286,10 @@ def _build_target(
 def orchestrate(
     target: str,
     sources_yml: Path,
-    work_dir: Path,
+    sources_dir: Path,
+    output_root: Path,
+    external_sources_dir: Path,
+    base_db_dir: Path,
     base_repo_cc0: str,
     version: str,
     force: bool,
@@ -294,25 +298,27 @@ def orchestrate(
     repo_mit: str | None,
     repo_cc4: str | None,
 ) -> None:
-    repo_root = _repo_root()
-    sources_dir = Path(work_dir)
-    external_sources_dir = _external_sources_dir(repo_root)
+    sources_dir = Path(sources_dir)
+    output_root = Path(output_root)
+    external_sources_dir = Path(external_sources_dir)
+    base_db_dir = Path(base_db_dir)
 
     sources = load_sources_config(sources_yml)
 
     def target_cfg(name: str) -> TargetConfig:
-        out_dir = repo_root / f"out_db_{name}"
+        out_dir = output_root / f"out_db_{name}"
+        report_dir = out_dir / "report"
         return TargetConfig(
             name=name,
             repo_id=base_repo_cc0,
             output_dir=out_dir,
             output_db=out_dir / f"genai-image-tag-db-{name}.sqlite",
             parquet_dir=out_dir / "parquet_danbooru",
+            report_dir=report_dir,
             manifest_path=out_dir / "build_manifest.json",
         )
 
-    base_dir = repo_root / "base_dbs" / "cc0"
-    base_info = _download_base_db(base_repo_cc0, base_dir, force=force)
+    base_info = _download_base_db(base_repo_cc0, base_db_dir, force=force)
     base_db_path = Path(base_info["path"])
     base_db_info = {
         "repo_id": base_repo_cc0,
@@ -399,10 +405,28 @@ def main() -> None:
         help="sources.yml path",
     )
     p.add_argument(
-        "--work-dir",
+        "--sources-dir",
         type=Path,
         default=_repo_root(),
         help="sources_dir passed to build_dataset",
+    )
+    p.add_argument(
+        "--output-root",
+        type=Path,
+        default=_repo_root(),
+        help="output root directory (out_db_* will be created here)",
+    )
+    p.add_argument(
+        "--external-sources-dir",
+        type=Path,
+        default=_external_sources_dir(_repo_root()),
+        help="external sources directory",
+    )
+    p.add_argument(
+        "--base-db-dir",
+        type=Path,
+        default=_repo_root() / "base_dbs" / "cc0",
+        help="local directory for cached base DB downloads",
     )
     p.add_argument(
         "--base-cc0-repo",
@@ -425,7 +449,10 @@ def main() -> None:
     orchestrate(
         target=args.target,
         sources_yml=args.sources_yml,
-        work_dir=args.work_dir,
+        sources_dir=args.sources_dir,
+        output_root=args.output_root,
+        external_sources_dir=args.external_sources_dir,
+        base_db_dir=args.base_db_dir,
         base_repo_cc0=args.base_cc0_repo,
         version=args.version,
         force=args.force,
