@@ -141,12 +141,12 @@ def test_site_tags_adapter_sankaku_sparse_translation_columns_are_not_dropped(
         # 先頭100行には trans_zh-CN を入れない（Polarsの既定推定長で落ちやすい）
         for i in range(150):
             conn.execute(
-                "INSERT INTO tags (id, name, type, post_count, pool_count, series_count, trans_en, \"trans_zh-CN\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                'INSERT INTO tags (id, name, type, post_count, pool_count, series_count, trans_en, "trans_zh-CN") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 (i, f"tag_{i}", 0, 1, 0, 0, f"en_{i}", None),
             )
         # 後半にのみ trans_zh-CN が入る
         conn.execute(
-            "INSERT INTO tags (id, name, type, post_count, pool_count, series_count, trans_en, \"trans_zh-CN\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            'INSERT INTO tags (id, name, type, post_count, pool_count, series_count, trans_en, "trans_zh-CN") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             (999, "rape", 0, 0, 0, 0, "rape", "強姦"),
         )
         conn.commit()

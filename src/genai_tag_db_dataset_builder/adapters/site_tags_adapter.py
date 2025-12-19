@@ -13,11 +13,10 @@ deepghs/site_tags は「サイトごとに1つの tags.sqlite」を持ち、サ�
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-
-import sqlite3
 
 import polars as pl
 from loguru import logger
@@ -128,10 +127,14 @@ class SiteTagsAdapter(BaseAdapter):
                         deprecated_flag = deprecated_flag or (type_val.lower() == "deprecated")
 
                     source_created_at = (
-                        str(raw.get(schema.created_at_col)) if schema.created_at_col and raw.get(schema.created_at_col) else None
+                        str(raw.get(schema.created_at_col))
+                        if schema.created_at_col and raw.get(schema.created_at_col)
+                        else None
                     )
                     source_updated_at = (
-                        str(raw.get(schema.updated_at_col)) if schema.updated_at_col and raw.get(schema.updated_at_col) else None
+                        str(raw.get(schema.updated_at_col))
+                        if schema.updated_at_col and raw.get(schema.updated_at_col)
+                        else None
                     )
 
                     out: dict[str, object] = {
@@ -164,11 +167,7 @@ class SiteTagsAdapter(BaseAdapter):
                 # Polars の dicts→DataFrame 変換は既定で先頭N行だけでスキーマ推定するため、
                 # 低頻度の翻訳列（例: zh-CN / de / th など）が後半にしか出ないと列自体が落ちる。
                 # ここでは chunk 内の全行を見て推定する。
-                df = (
-                    pl.DataFrame(out_rows, infer_schema_length=None)
-                    if out_rows
-                    else pl.DataFrame()
-                )
+                df = pl.DataFrame(out_rows, infer_schema_length=None) if out_rows else pl.DataFrame()
                 if df.height:
                     yield SiteTagsChunk(df=df, translation_columns=translation_columns)
 
@@ -376,14 +375,13 @@ class SiteTagsAdapter(BaseAdapter):
 
         raise ValueError(f"Unsupported site_tags schema: {self.sqlite_path} (cols={col_names})")
 
-    def _build_select_query(
-        self, schema: _Schema
-    ) -> tuple[str, list[str], dict[str, str]]:
+    def _build_select_query(self, schema: _Schema) -> tuple[str, list[str], dict[str, str]]:
         """tags テーブルから必要最小限だけ SELECT するクエリを構築する."""
+
         def _q(name: str) -> str:
             # `trans_zh-CN` のような `-` を含む列名があるため、常に識別子をクォートする。
             # SQLite の識別子クォートは `"`（内部の `"` は `""` でエスケープ）。
-            return f"\"{name.replace('\"', '\"\"')}\""
+            return f'"{name.replace('"', '""')}"'
 
         cols = [schema.tag_col]
         if schema.count_col:
@@ -481,9 +479,10 @@ class SiteTagsAdapter(BaseAdapter):
             return alias_to_tag, deprecated_by_target, invalid_aliases
 
         # 2) tags.alias が「推奨先 id」を指す形式（anime-pictures）
-        if schema.tag_col == "tag" and conn.execute(
-            "SELECT 1 FROM pragma_table_info('tags') WHERE name='alias'"
-        ).fetchone():
+        if (
+            schema.tag_col == "tag"
+            and conn.execute("SELECT 1 FROM pragma_table_info('tags') WHERE name='alias'").fetchone()
+        ):
             # alias は tags.id を参照する
             rows = conn.execute(
                 """

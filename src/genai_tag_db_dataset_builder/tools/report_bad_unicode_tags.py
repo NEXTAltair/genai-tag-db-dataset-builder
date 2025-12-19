@@ -155,7 +155,9 @@ def _site_tags_find_origin(site_sqlite: Path, tag_value: str) -> dict[str, Any] 
     con.row_factory = sqlite3.Row
     try:
         if tags_col is not None:
-            row = con.execute(f"SELECT *, hex({tags_col}) AS _hex FROM tags WHERE {tags_col} = ? LIMIT 1;", (tag_value,)).fetchone()
+            row = con.execute(
+                f"SELECT *, hex({tags_col}) AS _hex FROM tags WHERE {tags_col} = ? LIMIT 1;", (tag_value,)
+            ).fetchone()
             if row is not None:
                 d = dict(row)
                 d["_origin"] = f"tags.{tags_col}"
@@ -206,7 +208,9 @@ def _site_tags_find_alias_by_target_tag(site_sqlite: Path, target_tag_value: str
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Report tags containing U+FFFD and their origins (site_tags).")
-    p.add_argument("--db", type=Path, required=True, help="Path to built SQLite DB (e.g. out_db_cc4/*.sqlite)")
+    p.add_argument(
+        "--db", type=Path, required=True, help="Path to built SQLite DB (e.g. out_db_cc4/*.sqlite)"
+    )
     p.add_argument(
         "--site-tags-root",
         type=Path,

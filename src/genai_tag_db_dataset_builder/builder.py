@@ -2627,19 +2627,27 @@ def build_dataset(
                             df = df.with_columns(pl.lit(-1).cast(pl.Int64).alias("type_id"))
                         else:
                             df = df.with_columns(
-                                pl.col("type_id").cast(pl.Int64, strict=False).fill_null(-1).alias("type_id")
+                                pl.col("type_id")
+                                .cast(pl.Int64, strict=False)
+                                .fill_null(-1)
+                                .alias("type_id")
                             )
                         if "deprecated_tags" not in df.columns:
                             df = df.with_columns(pl.lit("").alias("deprecated_tags"))
                         else:
                             df = df.with_columns(
-                                pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias("deprecated_tags")
+                                pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias(
+                                    "deprecated_tags"
+                                )
                             )
                         if "deprecated" not in df.columns:
                             df = df.with_columns(pl.lit(0).cast(pl.Int64).alias("deprecated"))
                         else:
                             df = df.with_columns(
-                                pl.col("deprecated").cast(pl.Int64, strict=False).fill_null(0).alias("deprecated")
+                                pl.col("deprecated")
+                                .cast(pl.Int64, strict=False)
+                                .fill_null(0)
+                                .alias("deprecated")
                             )
                         if "deprecated_at" not in df.columns:
                             df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("deprecated_at"))
@@ -2686,7 +2694,16 @@ def build_dataset(
                         updated_ats = df["source_updated_at"].to_list()
                         counts = df["count"].to_list() if "count" in df.columns else [None] * len(df)
 
-                        for raw_source_tag, dep, fmt, tid, dep_flag, src_created_at, src_updated_at, cnt in zip(
+                        for (
+                            raw_source_tag,
+                            dep,
+                            fmt,
+                            tid,
+                            dep_flag,
+                            src_created_at,
+                            src_updated_at,
+                            cnt,
+                        ) in zip(
                             source_tags,
                             deprecated_list,
                             format_ids,
@@ -2705,10 +2722,14 @@ def build_dataset(
                             tid_i = int(tid) if tid is not None else -1
                             canonical_deprecated = 1 if dep_flag else 0
                             canonical_source_created_at = (
-                                str(src_created_at) if src_created_at is not None and str(src_created_at).strip() else None
+                                str(src_created_at)
+                                if src_created_at is not None and str(src_created_at).strip()
+                                else None
                             )
                             canonical_source_updated_at = (
-                                str(src_updated_at) if src_updated_at is not None and str(src_updated_at).strip() else None
+                                str(src_updated_at)
+                                if src_updated_at is not None and str(src_updated_at).strip()
+                                else None
                             )
 
                             for rec in process_deprecated_tags(
@@ -2737,7 +2758,9 @@ def build_dataset(
                                     count_i = int(cnt)
                                 except (TypeError, ValueError):
                                     continue
-                                usage_rows.append((canonical_tag_id, fmt_i, count_i, canonical_source_updated_at))
+                                usage_rows.append(
+                                    (canonical_tag_id, fmt_i, count_i, canonical_source_updated_at)
+                                )
 
                         if st_rows:
                             conn.executemany(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, st_rows)
