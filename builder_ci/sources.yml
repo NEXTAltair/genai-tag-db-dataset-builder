@@ -1,52 +1,52 @@
-# Phase 8: 外部ソース定義ファイル
-# 各ソースのURL、ライセンス、使用対象ビルド、取り込むファイルを定義
+﻿# Phase 8: external source definitions
+# Define source URLs, licenses, build targets, and file selection rules.
 
 sources:
-  # CC0ソース: p1atdev/danbooru-ja-tag-pair
+  # CC0 source: p1atdev/danbooru-ja-tag-pair
   - id: p1atdev-danbooru-ja-tag-pair
     kind: hf_dataset
     repo_id: p1atdev/danbooru-ja-tag-pair-20241015
     license: cc0-1.0
-    applies_to: [cc0, mit, cc4]  # 全ビルドで使用可能
+    applies_to: [cc0, mit, cc4]
     data_type: translation_ja
     paths_include:
       - "data/train-*.parquet"
     hf_config:
-      use_datasets_api: true  # datasets.load_dataset()で取得（builder.pyが直接処理）
+      use_datasets_api: true
     enabled: true
 
-  # MITソース: booru-japanese-tag
+  # MIT source: booru-japanese-tag
   - id: booru-japanese-tag
     kind: github
     url: https://github.com/boorutan/booru-japanese-tag
     license: mit
-    applies_to: [mit]  # MIT版のみ
+    applies_to: [mit]
     data_type: translation_ja
     paths_include:
       - "danbooru-machine-jp.csv"
     revision_tracking: commit_hash
     enabled: true
 
-# 将来追加予定のソース（Phase 8.1では無効）
-#
-# - id: deepghs-site-tags
-#   kind: hf_dataset
-#   repo_id: deepghs/site_tags
-#   url: https://huggingface.co/datasets/deepghs/site_tags
-#   license: cc-by-4.0
-#   applies_to: [cc4]
-#   data_type: site_tags_sqlite
-#   paths_include:
-#     - "*/tags.sqlite"
-#   revision_tracking: hf_revision
-#   enabled: false
-#
-# - id: tag-autocomplete-zh
-#   kind: github
-#   url: https://github.com/sgmklp/tag-for-autocompletion-with-translation
-#   license: unspecified  # 要確認
-#   applies_to: [cc0, mit, cc4]
-#   data_type: translation_zh
-#   paths_include:
-#     - "Tags-zh-full.csv"
-#   enabled: false  # LICENSE確認後にtrue
+  # CC-BY-4.0 source: deepghs/site_tags
+  - id: deepghs-site-tags
+    kind: hf_dataset
+    repo_id: deepghs/site_tags
+    url: https://huggingface.co/datasets/deepghs/site_tags
+    license: cc-by-4.0
+    applies_to: [cc4]
+    data_type: site_tags_sqlite
+    paths_include:
+      - "*/tags.sqlite"
+    revision_tracking: hf_revision
+    enabled: true
+
+  # zh-CN translation (license pending)
+  - id: tag-autocomplete-zh
+    kind: github
+    url: https://github.com/sgmklp/tag-for-autocompletion-with-translation
+    license: unspecified
+    applies_to: [cc0, mit, cc4]
+    data_type: translation_zh_cn
+    paths_include:
+      - "Tags-zh-full.csv"
+    enabled: false
