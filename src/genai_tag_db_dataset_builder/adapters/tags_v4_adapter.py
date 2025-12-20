@@ -112,7 +112,9 @@ class Tags_v4_Adapter(BaseAdapter):
         )
 
         if len(remap_rows) > 0:
-            remap: dict[int, int] = dict(zip(remap_rows["tag_id"].to_list(), remap_rows["canonical_tag_id"].to_list()))
+            remap: dict[int, int] = dict(
+                zip(remap_rows["tag_id"].to_list(), remap_rows["canonical_tag_id"].to_list())
+            )
 
             def _remap_id(v: int) -> int:
                 return remap.get(v, v)
@@ -172,7 +174,9 @@ class Tags_v4_Adapter(BaseAdapter):
         )
         return tags_df.sort("tag_id").unique(subset=["tag"], keep="first")
 
-    def _detect_tag_status_conflicts(self, tag_status_df: pl.DataFrame, tags_df: pl.DataFrame) -> pl.DataFrame:
+    def _detect_tag_status_conflicts(
+        self, tag_status_df: pl.DataFrame, tags_df: pl.DataFrame
+    ) -> pl.DataFrame:
         """重複タグ統合時に TAG_STATUS の衝突を検出する.
 
         手動レビューが必要な衝突の一覧を DataFrame として返します。

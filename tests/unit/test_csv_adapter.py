@@ -83,7 +83,6 @@ class TestCSVAdapter:
         assert "tag" not in normalized.columns
         assert normalized["source_tag"].to_list() == ["witch", "spiked_collar"]
 
-
     def test_normalized_source_raises_skip_error(self, tmp_path: Path) -> None:
         """NORMALIZED判定されたソースはスキップされる."""
         csv_path = tmp_path / "normalized.csv"
@@ -118,9 +117,7 @@ class TestCSVAdapter:
         """dataset_rising_v2 は正則化済み tag でも deprecated_tags 取り込みのため許可する."""
         csv_path = tmp_path / "dataset_rising_v2.csv"
         csv_path.write_text(
-            "tag,deprecated_tags,format_id\n"
-            '1 eye,"one-eyed, single eye",\n'
-            '2 tails,"two tails",\n',
+            'tag,deprecated_tags,format_id\n1 eye,"one-eyed, single eye",\n2 tails,"two tails",\n',
             encoding="utf-8",
         )
         adapter = CSV_Adapter(csv_path, repair_mode="dataset_rising_v2")

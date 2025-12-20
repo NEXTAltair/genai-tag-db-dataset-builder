@@ -1,0 +1,114 @@
+name: Update Tag Dataset (CI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Build target"
+        required: true
+        type: choice
+        options:
+          - cc0
+          - mit
+          - cc4
+          - all
+        default: "cc0"
+      publish:
+        description: "Publish to Hugging Face"
+        required: true
+        type: boolean
+        default: false
+      force:
+        description: "Force rebuild (ignore revision check)"
+        required: true
+        type: boolean
+        default: false
+
+env:
+  HF_REPO_CC0: NEXTAltair/genai-image-tag-db
+  HF_REPO_MIT: NEXTAltair/genai-image-tag-db-mit
+  HF_REPO_CC4: NEXTAltair/genai-image-tag-db-CC4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Cache Hugging Face
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cache-${{ runner.os }}-${{ hashFiles('builder_ci/sources.yml') }}
+          restore-keys: hf-cache-${{ runner.os }}-
+
+      - name: Cache external sources
+        uses: actions/cache@v4
+        with:
+          path: external_sources
+          key: external-sources-${{ runner.os }}-${{ hashFiles('builder_ci/sources.yml') }}
+          restore-keys: external-sources-${{ runner.os }}-
+
+      - name: Cache base DBs
+        uses: actions/cache@v4
+        with:
+          path: base_dbs
+          key: base-dbs-${{ runner.os }}-${{ hashFiles('builder_ci/sources.yml') }}
+          restore-keys: base-dbs-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          uv sync --dev
+
+      - name: Run orchestrator
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          VERSION="v$(date -u +%Y.%m.%d).${{ github.run_number }}"
+          PUBLISH_FLAG=""
+          FORCE_FLAG=""
+          if [ "${{ inputs.publish }}" = "true" ]; then
+            PUBLISH_FLAG="--publish"
+          fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+          uv run python -m builder_ci.main \
+            --target "${{ inputs.target }}" \
+            --sources-yml builder_ci/sources.yml \
+            --sources-dir . \
+            --output-root ci_output \
+            --external-sources-dir external_sources \
+            --base-db-dir base_dbs/cc0 \
+            --base-cc0-repo "${HF_REPO_CC0}" \
+            --repo-cc0 "${HF_REPO_CC0}" \
+            --repo-mit "${HF_REPO_MIT}" \
+            --repo-cc4 "${HF_REPO_CC4}" \
+            --version "${VERSION}" \
+            ${FORCE_FLAG} \
+            ${PUBLISH_FLAG}
+
+      - name: Upload artifacts (when not published)
+        if: ${{ !inputs.publish }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tag-dataset-${{ inputs.target }}
+          path: |
+            ci_output/out_db_${{ inputs.target }}/*.sqlite
+            ci_output/out_db_${{ inputs.target }}/README.md
+            ci_output/out_db_${{ inputs.target }}/parquet_danbooru/
+            ci_output/out_db_${{ inputs.target }}/report/
+            ci_output/out_db_${{ inputs.target }}/build_manifest.json
+          retention-days: 30

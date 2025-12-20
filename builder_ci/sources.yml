@@ -1,0 +1,52 @@
+﻿# Phase 8: external source definitions
+# Define source URLs, licenses, build targets, and file selection rules.
+
+sources:
+  # CC0 source: p1atdev/danbooru-ja-tag-pair
+  - id: p1atdev-danbooru-ja-tag-pair
+    kind: hf_dataset
+    repo_id: p1atdev/danbooru-ja-tag-pair-20241015
+    license: cc0-1.0
+    applies_to: [cc0]
+    data_type: translation_ja
+    paths_include:
+      - "data/train-*.parquet"
+    hf_config:
+      use_datasets_api: true
+    enabled: true
+
+  # MIT source: booru-japanese-tag
+  - id: booru-japanese-tag
+    kind: github
+    url: https://github.com/boorutan/booru-japanese-tag
+    license: mit
+    applies_to: [mit]
+    data_type: translation_ja
+    paths_include:
+      - "danbooru-machine-jp.csv"
+    revision_tracking: commit_hash
+    enabled: true
+
+  # CC-BY-4.0 source: deepghs/site_tags
+  - id: deepghs-site-tags
+    kind: hf_dataset
+    repo_id: deepghs/site_tags
+    url: https://huggingface.co/datasets/deepghs/site_tags
+    license: cc-by-4.0
+    applies_to: [cc4]
+    data_type: site_tags_sqlite
+    paths_include:
+      - "*/tags.sqlite"
+    revision_tracking: hf_revision
+    enabled: true
+
+  # zh-CN translation (license pending)
+  - id: tag-autocomplete-zh
+    kind: github
+    url: https://github.com/sgmklp/tag-for-autocompletion-with-translation
+    license: unspecified
+    applies_to: [cc0]
+    data_type: translation_zh_cn
+    paths_include:
+      - "Tags-zh-full.csv"
+    enabled: false

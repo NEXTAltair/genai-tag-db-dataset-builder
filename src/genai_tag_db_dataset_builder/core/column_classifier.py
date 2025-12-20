@@ -92,14 +92,14 @@ def classify_tag_column(
 ) -> tuple[TagColumnType, dict[str, object]]:
     """tag列が SOURCE / NORMALIZED / UNKNOWN のどれかを推定する.
 
-シグナル（ざっくり）:
-- underscore_ratio が高い: SOURCE 寄り
-- escaped_paren_ratio が高い: NORMALIZED 寄り（DBツールの括弧エスケープ痕跡）
-- normalize_change_ratio が低い: NORMALIZED 寄り（既に正規化済み）
+    シグナル（ざっくり）:
+    - underscore_ratio が高い: SOURCE 寄り
+    - escaped_paren_ratio が高い: NORMALIZED 寄り（DBツールの括弧エスケープ痕跡）
+    - normalize_change_ratio が低い: NORMALIZED 寄り（既に正規化済み）
 
-Returns:
-    (TagColumnType, signals_dict)
-"""
+    Returns:
+        (TagColumnType, signals_dict)
+    """
     if column_name not in df.columns:
         raise ValueError(f"Column '{column_name}' not found in DataFrame")
 
@@ -162,4 +162,3 @@ Returns:
         normalized_signals=normalized_signals,
     )
     return decision, signals.as_dict()
-

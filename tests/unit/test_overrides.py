@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 from genai_tag_db_dataset_builder.adapters.csv_adapter import CSV_Adapter

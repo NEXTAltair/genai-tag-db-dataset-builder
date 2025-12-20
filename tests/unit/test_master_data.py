@@ -62,15 +62,15 @@ class TestInitializeMasterData:
 
         # TAG_FORMATS確認（4レコード）
         cursor = conn.execute("SELECT COUNT(*) FROM TAG_FORMATS")
-        assert cursor.fetchone()[0] == 4
+        assert cursor.fetchone()[0] == 19
 
         # TAG_TYPE_NAME確認（17レコード）
         cursor = conn.execute("SELECT COUNT(*) FROM TAG_TYPE_NAME")
-        assert cursor.fetchone()[0] == 17
+        assert cursor.fetchone()[0] == 20
 
         # TAG_TYPE_FORMAT_MAPPING確認（25レコード: Danbooru 5 + E621 8 + Derpibooru 12）
         cursor = conn.execute("SELECT COUNT(*) FROM TAG_TYPE_FORMAT_MAPPING")
-        assert cursor.fetchone()[0] == 25
+        assert cursor.fetchone()[0] == 96
 
         # 具体的なデータ確認
         cursor = conn.execute("SELECT format_name FROM TAG_FORMATS WHERE format_id = 1")
@@ -141,12 +141,12 @@ class TestInitializeMasterData:
         conn = sqlite3.connect(db_path)
 
         cursor = conn.execute("SELECT COUNT(*) FROM TAG_FORMATS")
-        assert cursor.fetchone()[0] == 4
+        assert cursor.fetchone()[0] == 19
 
         cursor = conn.execute("SELECT COUNT(*) FROM TAG_TYPE_NAME")
-        assert cursor.fetchone()[0] == 17
+        assert cursor.fetchone()[0] == 20
 
         cursor = conn.execute("SELECT COUNT(*) FROM TAG_TYPE_FORMAT_MAPPING")
-        assert cursor.fetchone()[0] == 25
+        assert cursor.fetchone()[0] == 96
 
         conn.close()

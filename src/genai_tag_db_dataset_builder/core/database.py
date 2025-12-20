@@ -56,6 +56,7 @@ def apply_connection_pragmas(conn: sqlite3.Connection, *, profile: str) -> None:
     for pragma in pragmas:
         conn.execute(pragma)
 
+
 # 必須インデックス（想定クエリに基づく）
 REQUIRED_INDEXES = [
     # TAGS検索用（部分一致・完全一致）
@@ -118,6 +119,9 @@ SCHEMA_SQL = [
         type_id INTEGER NOT NULL,
         alias BOOLEAN NOT NULL,
         preferred_tag_id INTEGER NOT NULL,
+        deprecated BOOLEAN NOT NULL DEFAULT 0,
+        deprecated_at DATETIME NULL,
+        source_created_at DATETIME NULL,
         created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
         updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
         PRIMARY KEY (tag_id, format_id),

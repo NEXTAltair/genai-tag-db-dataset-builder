@@ -174,6 +174,9 @@ class TestSchemaCompatibility:
                 ("type_id", "INTEGER", True, False),
                 ("alias", "BOOLEAN", True, False),
                 ("preferred_tag_id", "INTEGER", True, False),
+                ("deprecated", "BOOLEAN", True, False),
+                ("deprecated_at", "DATETIME", False, False),
+                ("source_created_at", "DATETIME", False, False),
                 ("created_at", "DATETIME", False, False),
                 ("updated_at", "DATETIME", False, False),
             ],
@@ -198,7 +201,10 @@ class TestSchemaCompatibility:
         try:
             for table, expected_columns in expected.items():
                 rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
-                got = [(name, col_type.upper(), bool(notnull), bool(pk)) for _, name, col_type, notnull, _, pk in rows]
+                got = [
+                    (name, col_type.upper(), bool(notnull), bool(pk))
+                    for _, name, col_type, notnull, _, pk in rows
+                ]
                 assert got == expected_columns
         finally:
             conn.close()

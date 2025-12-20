@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from genai_tag_db_dataset_builder import builder
 
 
@@ -46,3 +48,20 @@ def test_should_include_source_include_pattern_and_exclude_pattern() -> None:
         exclude_patterns=["*/skip_*.csv"],
     )
 
+
+def test_infer_source_timestamp_utc_midnight() -> None:
+    assert (
+        builder._infer_source_timestamp_utc_midnight(Path("danbooru_241016.csv"))
+        == "2024-10-16 00:00:00+00:00"
+    )
+    assert (
+        builder._infer_source_timestamp_utc_midnight(Path("danbooru_20241016.csv"))
+        == "2024-10-16 00:00:00+00:00"
+    )
+    assert builder._infer_source_timestamp_utc_midnight(Path("no_date.csv")) is None
+
+
+def test_is_authoritative_count_source() -> None:
+    assert builder._is_authoritative_count_source(Path("danbooru_241016.csv"))
+    assert not builder._is_authoritative_count_source(Path("danbooru.csv"))
+    assert not builder._is_authoritative_count_source(Path("e621_241016.csv"))

@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import csv
 import sqlite3
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 
 def _write_tsv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> int:
@@ -197,7 +197,14 @@ def run_health_checks(db_path: Path, out_dir: Path) -> Path:
             alias_incons_out,
             ["format_id", "tag_id", "tag", "alias", "preferred_tag_id", "preferred_tag"],
             [
-                (r["format_id"], r["tag_id"], r["tag"], r["alias"], r["preferred_tag_id"], r["preferred_tag"])
+                (
+                    r["format_id"],
+                    r["tag_id"],
+                    r["tag"],
+                    r["alias"],
+                    r["preferred_tag_id"],
+                    r["preferred_tag"],
+                )
                 for r in alias_incons
             ],
         )

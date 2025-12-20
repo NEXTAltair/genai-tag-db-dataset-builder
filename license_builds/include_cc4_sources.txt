@@ -1,0 +1,19 @@
+# deepghs/site_tags (CC-BY-4.0): SQLite sources for CC4 build
+external_sources/site_tags/anime-pictures.net/tags.sqlite
+external_sources/site_tags/booru.allthefallen.moe/tags.sqlite
+external_sources/site_tags/chan.sankakucomplex.com/tags.sqlite
+external_sources/site_tags/danbooru.donmai.us/tags.sqlite
+external_sources/site_tags/e621.net/tags.sqlite
+external_sources/site_tags/en.pixiv.net/tags.sqlite
+external_sources/site_tags/gelbooru.com/tags.sqlite
+external_sources/site_tags/hypnohub.net/tags.sqlite
+external_sources/site_tags/konachan.com/tags.sqlite
+external_sources/site_tags/konachan.net/tags.sqlite
+external_sources/site_tags/lolibooru.moe/tags.sqlite
+external_sources/site_tags/pixiv.net/tags.sqlite
+external_sources/site_tags/rule34.xxx/tags.sqlite
+external_sources/site_tags/safebooru.donmai.us/tags.sqlite
+external_sources/site_tags/wallhaven.cc/tags.sqlite
+external_sources/site_tags/xbooru.com/tags.sqlite
+external_sources/site_tags/yande.re/tags.sqlite
+external_sources/site_tags/zerochan.net/tags.sqlite

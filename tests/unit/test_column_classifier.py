@@ -123,4 +123,3 @@ class TestClassifyTagColumn:
         df = pl.DataFrame({"tag": []}, schema={"tag": pl.Utf8})
         with pytest.raises(ValueError, match="Column 'tag' is empty"):
             classify_tag_column(df, "tag")
-
