@@ -85,6 +85,7 @@ def _generate_include_filter(
     sources: list[dict],
     external_dir: Path,
     report_dir: Path,
+    extra_paths: Iterable[str] | None = None,
 ) -> Path:
     lines: list[str] = []
     for src in sources:
@@ -93,10 +94,44 @@ def _generate_include_filter(
         for pattern in src.get("paths_include", []):
             lines.append(f"{external_dir.name}/{src['id']}/{pattern}")
 
+    if extra_paths:
+        lines.extend(extra_paths)
+
     report_dir.mkdir(parents=True, exist_ok=True)
     include_path = report_dir / "include_sources.generated.txt"
     include_path.write_text("\n".join(lines), encoding="utf-8")
     return include_path
+
+
+def _stage_translation_csvs(
+    sources: list[dict],
+    external_dir: Path,
+    sources_dir: Path,
+) -> list[str]:
+    staged: list[str] = []
+    staging_root = sources_dir / "TagDB_DataSource_CSV" / "A"
+
+    for src in sources:
+        if src.get("data_type") != "translation_ja":
+            continue
+        if src.get("kind") != "github":
+            continue
+        src_root = external_dir / src["id"]
+        matched = False
+        for pattern in src.get("paths_include", []):
+            for file_path in src_root.glob(pattern):
+                if not file_path.is_file():
+                    continue
+                staging_root.mkdir(parents=True, exist_ok=True)
+                dest_path = staging_root / file_path.name
+                shutil.copyfile(file_path, dest_path)
+                staged.append(dest_path.relative_to(sources_dir).as_posix())
+                matched = True
+        if not matched:
+            logger.warning(
+                f"No translation_ja CSV matched for {src.get('id')} under {src_root}"
+            )
+    return staged
 
 
 def _hf_translation_datasets(sources: Iterable[dict]) -> list[str]:
@@ -236,7 +271,13 @@ def _build_target(
     logger.info(f"=== Build start: {target.name} ===")
 
     source_meta = _fetch_sources(sources, external_sources_dir, force=force)
-    include_path = _generate_include_filter(sources, external_sources_dir, target.report_dir)
+    staged_paths = _stage_translation_csvs(sources, external_sources_dir, sources_dir)
+    include_path = _generate_include_filter(
+        sources,
+        external_sources_dir,
+        target.report_dir,
+        extra_paths=staged_paths,
+    )
     hf_ja_datasets = _hf_translation_datasets(sources)
 
     manifest_existing = load_build_manifest(target.manifest_path)
