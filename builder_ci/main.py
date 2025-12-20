@@ -23,6 +23,8 @@ from builder_ci.manifest import (
     should_rebuild,
     write_build_manifest,
 )
+from builder_ci.publisher import publish_dataset
+from builder_ci.readme import generate_readme
 _module_root = Path(__file__).resolve().parents[1]
 src_dir = _module_root / "src"
 if src_dir.exists():
@@ -30,9 +32,6 @@ if src_dir.exists():
 
 from genai_tag_db_dataset_builder.builder import build_dataset
 from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks
-from genai_tag_db_dataset_builder.upload import upload_to_huggingface
-
-
 @dataclass(frozen=True)
 class TargetConfig:
     name: str
@@ -227,6 +226,7 @@ def _build_target(
     external_sources_dir: Path,
     base_db_path: Path,
     base_db_info: dict,
+    sources_yml: Path,
     version: str,
     force: bool,
     skip_danbooru_snapshot_replace: bool,
@@ -284,18 +284,32 @@ def _build_target(
     )
     write_build_manifest(manifest, target.manifest_path)
 
+    readme_path = target.output_dir / "README.md"
+    readme_path.write_text(
+        generate_readme(
+            target=target.name,
+            output_dir=target.output_dir,
+            sources_yml=sources_yml,
+            base_db_info=base_db_info,
+        ),
+        encoding="utf-8",
+    )
+
     if publish:
         if not publish_repo_id:
             raise ValueError("publish requested but repo_id is not set")
         token = os.environ.get("HF_TOKEN")
         if not token:
             raise ValueError("publish requested but HF_TOKEN is not set")
-        upload_to_huggingface(
-            db_path=target.output_db,
-            metadata_path=target.manifest_path,
+        publish_dataset(
+            output_db=target.output_db,
+            output_dir=target.output_dir,
+            parquet_dir=target.parquet_dir,
+            report_dir=target.report_dir,
+            manifest_path=target.manifest_path,
             repo_id=publish_repo_id,
-            version=version,
             token=token,
+            commit_message=f"{target.name} build {version}",
         )
 
     logger.info(f"=== Build done: {target.name} ===")
@@ -354,6 +368,7 @@ def orchestrate(
             external_sources_dir=external_sources_dir,
             base_db_path=base_db_path,
             base_db_info=base_db_info,
+            sources_yml=sources_yml,
             version=version,
             force=force,
             skip_danbooru_snapshot_replace=False,
@@ -370,6 +385,7 @@ def orchestrate(
             external_sources_dir=external_sources_dir,
             base_db_path=cc0_db,
             base_db_info={"repo_id": "cc0_local", "path": str(cc0_db)},
+            sources_yml=sources_yml,
             version=version,
             force=force,
             skip_danbooru_snapshot_replace=True,
@@ -386,6 +402,7 @@ def orchestrate(
             external_sources_dir=external_sources_dir,
             base_db_path=cc0_db,
             base_db_info={"repo_id": "cc0_local", "path": str(cc0_db)},
+            sources_yml=sources_yml,
             version=version,
             force=force,
             skip_danbooru_snapshot_replace=True,
@@ -424,28 +441,34 @@ def main() -> None:
         help="sources.yml path",
     )
     p.add_argument(
-        "--sources-dir",
+        "--work-dir",
         type=Path,
         default=_repo_root(),
-        help="sources_dir passed to build_dataset",
+        help="base working directory (defaults to repo root)",
+    )
+    p.add_argument(
+        "--sources-dir",
+        type=Path,
+        default=None,
+        help="sources_dir passed to build_dataset (default: --work-dir)",
     )
     p.add_argument(
         "--output-root",
         type=Path,
-        default=_repo_root(),
-        help="output root directory (out_db_* will be created here)",
+        default=None,
+        help="output root directory (default: --work-dir/ci_output)",
     )
     p.add_argument(
         "--external-sources-dir",
         type=Path,
-        default=_external_sources_dir(_repo_root()),
-        help="external sources directory",
+        default=None,
+        help="external sources directory (default: --work-dir/external_sources)",
     )
     p.add_argument(
         "--base-db-dir",
         type=Path,
-        default=_repo_root() / "base_dbs" / "cc0",
-        help="local directory for cached base DB downloads",
+        default=None,
+        help="local directory for cached base DB downloads (default: --work-dir/base_dbs/cc0)",
     )
     p.add_argument(
         "--base-cc0-repo",
@@ -465,13 +488,19 @@ def main() -> None:
 
     args = p.parse_args()
 
+    work_dir = args.work_dir
+    sources_dir = args.sources_dir or work_dir
+    output_root = args.output_root or (work_dir / "ci_output")
+    external_sources_dir = args.external_sources_dir or (work_dir / "external_sources")
+    base_db_dir = args.base_db_dir or (work_dir / "base_dbs" / "cc0")
+
     orchestrate(
         target=args.target,
         sources_yml=args.sources_yml,
-        sources_dir=args.sources_dir,
-        output_root=args.output_root,
-        external_sources_dir=args.external_sources_dir,
-        base_db_dir=args.base_db_dir,
+        sources_dir=sources_dir,
+        output_root=output_root,
+        external_sources_dir=external_sources_dir,
+        base_db_dir=base_db_dir,
         base_repo_cc0=args.base_cc0_repo,
         version=args.version,
         force=args.force,
