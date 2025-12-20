@@ -23,7 +23,7 @@ sources:
     applies_to: [mit]
     data_type: translation_ja
     paths_include:
-      - "danbooru-machine-jp.csv"
+      - "danbooru_machine_jp.csv"
     revision_tracking: commit_hash
     enabled: true
 
