@@ -2650,8 +2650,8 @@ def build_dataset(
                     translation_rows_total = 0
 
                     site_tags_adapter = SiteTagsAdapter(sqlite_path, format_id=format_id)
-                    for chunk in site_tags_adapter.iter_chunks(chunk_size=50_000):
-                        df = chunk.df
+                    for site_chunk in site_tags_adapter.iter_chunks(chunk_size=50_000):
+                        df = site_chunk.df
                         rows_read_total += int(df.height)
 
                         if "source_tag" not in df.columns:
@@ -2816,7 +2816,7 @@ def build_dataset(
                             conn.commit()
 
                         # translations（存在する言語を全て）
-                        present_lang_cols = [c for c in chunk.translation_columns if c in df.columns]
+                        present_lang_cols = [c for c in site_chunk.translation_columns if c in df.columns]
                         if present_lang_cols:
                             df_trans = df.select(["source_tag", *present_lang_cols])
                             trans_rows = _extract_translations(df_trans, tags_mapping)
