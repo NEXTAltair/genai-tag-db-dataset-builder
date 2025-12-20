@@ -1870,6 +1870,7 @@ def build_dataset(
     parquet_output_dir: Path | str | None = None,
     base_db_path: Path | str | None = None,
     skip_danbooru_snapshot_replace: bool = False,
+    warn_missing_csv_dir: bool = True,
     overwrite: bool = False,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
@@ -1884,6 +1885,7 @@ def build_dataset(
         parquet_output_dir: Parquet出力先ディレクトリ（Noneの場合はParquet出力なし）
         base_db_path: ベースとなる既存SQLiteファイル（MIT版ビルド等で使用）。指定時はPhase 0/1をスキップ
         skip_danbooru_snapshot_replace: Danbooruスナップショット置換をスキップする（MIT版で使用）
+        warn_missing_csv_dir: CSVディレクトリ未存在時に警告を出すか
         overwrite: 既存のoutput_pathを上書きするか
 
     Raises:
@@ -2226,7 +2228,8 @@ def build_dataset(
         # Phase 2: CSV ソースから追加データを取り込み
         csv_dir = sources_dir / "TagDB_DataSource_CSV"
         if not csv_dir.exists():
-            logger.warning(f"[Phase 2] CSV directory not found: {csv_dir}, skipping")
+            if warn_missing_csv_dir:
+                logger.warning(f"[Phase 2] CSV directory not found: {csv_dir}, skipping")
         else:
             logger.info(f"[Phase 2] Importing CSV sources from {csv_dir}")
 
