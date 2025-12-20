@@ -298,6 +298,10 @@ def _build_target(
         logger.info(f"No source changes for {target.name}, skipping build.")
         return target.output_db
 
+    # site_tags 取り込みは CSV ディレクトリ存在が前提のため、CI では空でも作成しておく
+    csv_root = sources_dir / "TagDB_DataSource_CSV"
+    csv_root.mkdir(parents=True, exist_ok=True)
+
     build_dataset(
         output_path=target.output_db,
         sources_dir=sources_dir,
