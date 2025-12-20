@@ -57,10 +57,6 @@ class ColumnTypeOverrides:
         valid_types = {t.value for t in TagColumnType}
 
         for file_path, columns in self._overrides.items():
-            if not isinstance(columns, dict):
-                msg = f"Invalid override format for '{file_path}': expected dict, got {type(columns)}"
-                raise ValueError(msg)
-
             for column_name, column_type in columns.items():
                 if column_type not in valid_types:
                     msg = (

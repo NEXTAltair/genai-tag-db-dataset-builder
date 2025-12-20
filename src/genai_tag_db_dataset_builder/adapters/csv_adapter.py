@@ -83,6 +83,7 @@ class CSV_Adapter(BaseAdapter):
         - `source_tag` は DB保存向けに小文字統一する（顔文字はそのまま）
         """
         if "tag" in df.columns and "source_tag" not in df.columns:
+            signals: dict[str, object]
             # overrides優先チェック
             override_type = self.overrides.get(self.file_path, "tag") if self.overrides else None
 

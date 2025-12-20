@@ -223,7 +223,9 @@ class SiteTagsAdapter(BaseAdapter):
         if {"name", "post_count", "pool_count", "series_count", "type"}.issubset(s) and any(
             c.startswith("trans_") for c in s
         ):
-            translation_map = {c: c.removeprefix("trans_") for c in col_names if c.startswith("trans_")}
+            translation_map_sankaku = {
+                c: c.removeprefix("trans_") for c in col_names if c.startswith("trans_")
+            }
             return self._Schema(
                 tag_col="name",
                 count_col="post_count",
@@ -232,7 +234,7 @@ class SiteTagsAdapter(BaseAdapter):
                 created_at_col=None,
                 updated_at_col=None,
                 type_is_gelbooru_string=False,
-                translation_map=translation_map,
+                translation_map=translation_map_sankaku,
             )
 
         # danbooru-like / safebooru / allthefallen
@@ -263,11 +265,11 @@ class SiteTagsAdapter(BaseAdapter):
 
         # anime-pictures style (tag_jp/tag_ru)
         if {"tag", "num", "type", "alias"}.issubset(s):
-            translation_map: dict[str, str] = {}
+            translation_map_ap: dict[str, str] = {}
             if "tag_jp" in s:
-                translation_map["tag_jp"] = "ja"
+                translation_map_ap["tag_jp"] = "ja"
             if "tag_ru" in s:
-                translation_map["tag_ru"] = "ru"
+                translation_map_ap["tag_ru"] = "ru"
             return self._Schema(
                 tag_col="tag",
                 count_col="num",
@@ -276,14 +278,14 @@ class SiteTagsAdapter(BaseAdapter):
                 created_at_col=None,
                 updated_at_col=None,
                 type_is_gelbooru_string=False,
-                translation_map=translation_map,
+                translation_map=translation_map_ap,
             )
 
         # pixiv (flags + trans_ja)
         if {"name", "posts", "updated_at"}.issubset(s) and "wiki_url" in s:
-            translation_map: dict[str, str] = {}
+            translation_map_pixiv: dict[str, str] = {}
             if "trans_ja" in s:
-                translation_map["trans_ja"] = "ja"
+                translation_map_pixiv["trans_ja"] = "ja"
             return self._Schema(
                 tag_col="name",
                 count_col="posts",
@@ -292,7 +294,7 @@ class SiteTagsAdapter(BaseAdapter):
                 created_at_col=None,
                 updated_at_col="updated_at",
                 type_is_gelbooru_string=False,
-                translation_map=translation_map,
+                translation_map=translation_map_pixiv,
             )
 
         # wallhaven (category_id/category_name)
@@ -429,8 +431,13 @@ class SiteTagsAdapter(BaseAdapter):
         if schema.type_is_gelbooru_string:
             s = str(value).strip().lower()
             return self._GELBOORU_TYPE_TO_ID.get(s, -1)
+        if isinstance(value, int | float | str | bytes):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return -1
         try:
-            return int(value)
+            return int(str(value))
         except (TypeError, ValueError):
             return -1
 

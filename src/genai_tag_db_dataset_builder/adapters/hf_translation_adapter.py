@@ -16,7 +16,12 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
+from datasets import (  # type: ignore[import-untyped,unused-ignore]
+    Dataset,
+    DatasetDict,
+    load_dataset,
+    load_from_disk,
+)
 
 
 def _is_local_dataset_path(repo_id_or_path: str) -> bool:

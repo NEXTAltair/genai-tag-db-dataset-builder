@@ -452,14 +452,15 @@ def _read_csv_best_effort(
     except Exception as e:
         msg = str(e).lower()
         if ("utf-8" in msg or "unicode" in msg) and bad_utf8_report_dir is not None:
-            raw = _read_csv_skip_invalid_utf8_lines(
+            raw_opt = _read_csv_skip_invalid_utf8_lines(
                 path,
                 has_header=False,
                 report_dir=bad_utf8_report_dir,
             )
-            if raw is None:
+            if raw_opt is None:
                 logger.warning(f"CSV fallback read failed: {path} ({e})")
                 return None
+            raw = raw_opt
         else:
             logger.warning(f"CSV fallback read failed: {path} ({e})")
             return None
@@ -480,8 +481,8 @@ def _read_csv_best_effort(
         c2 = sample[sample.columns[2]].cast(pl.Int64, strict=False)
         c1_ok = (c1.is_not_null().sum() / max(len(sample), 1)) >= 0.95
         c2_ok = (c2.is_not_null().sum() / max(len(sample), 1)) >= 0.95
-        c1_max = int(c1.max()) if c1_ok and c1.max() is not None else None
-        c2_max = int(c2.max()) if c2_ok and c2.max() is not None else None
+        c1_max = _safe_int(c1.max()) if c1_ok else None
+        c2_max = _safe_int(c2.max()) if c2_ok else None
 
         if (
             c1_ok
@@ -555,6 +556,21 @@ def _read_csv_skip_invalid_utf8_lines(
         return None
 
 
+def _safe_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int | float):
+        return int(value)
+    if isinstance(value, str | bytes):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _ensure_temp_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -603,13 +619,13 @@ def _insert_tag_status_rows(
     dedup: dict[tuple[int, int], tuple[int, int, int]] = {}
     for tag_id, format_id, type_id, alias, preferred_tag_id in rows:
         key = (tag_id, format_id)
-        cur = (type_id, alias, preferred_tag_id)
+        current = (type_id, alias, preferred_tag_id)
         prev = dedup.get(key)
         if prev is None:
-            dedup[key] = cur
+            dedup[key] = current
             continue
 
-        if prev != cur:
+        if prev != current:
             conflicts.append(
                 _ConflictRow(
                     source=source_name,
@@ -617,18 +633,18 @@ def _insert_tag_status_rows(
                     format_id=format_id,
                     kind="TAG_STATUS_INPUT_DUPLICATE",
                     existing=f"type_id={prev[0]},alias={prev[1]},preferred_tag_id={prev[2]}",
-                    incoming=f"type_id={cur[0]},alias={cur[1]},preferred_tag_id={cur[2]}",
+                    incoming=f"type_id={current[0]},alias={current[1]},preferred_tag_id={current[2]}",
                 )
             )
 
         # 選択ルール: canonical(=alias=0) を優先。次点で preferred_tag_id が小さい方。
         if prev[1] == 0:
             continue
-        if cur[1] == 0:
-            dedup[key] = cur
+        if current[1] == 0:
+            dedup[key] = current
             continue
-        if cur[2] < prev[2]:
-            dedup[key] = cur
+        if current[2] < prev[2]:
+            dedup[key] = current
 
     rows = [(k[0], k[1], v[0], v[1], v[2]) for k, v in dedup.items()]
 
@@ -639,7 +655,7 @@ def _insert_tag_status_rows(
         rows,
     )
 
-    cur = conn.execute(
+    conflict_cur = conn.execute(
         """
         SELECT
             t.tag_id,
@@ -668,7 +684,7 @@ def _insert_tag_status_rows(
         alias_incoming,
         preferred_existing,
         preferred_incoming,
-    ) in cur.fetchall():
+    ) in conflict_cur.fetchall():
         conflicts.append(
             _ConflictRow(
                 source=source_name,
@@ -1950,6 +1966,7 @@ def build_dataset(
     if skip_phase_0_1:
         import shutil
 
+        assert base_db_path is not None
         logger.info(f"[Base DB] Copying base database from {base_db_path} to {output_path}")
         if output_path.exists():
             output_path.unlink()
@@ -1968,6 +1985,8 @@ def build_dataset(
 
     conn = sqlite3.connect(output_path)
     apply_connection_pragmas(conn, profile="build")
+    existing_tags: set[str] = set()
+    tags_mapping: dict[str, int] = {}
     try:
         # Phase 1: tags_v4.db からベースデータを取り込み（base_db_path 指定時はスキップ）
         if not skip_phase_0_1:
@@ -2032,21 +2051,21 @@ def build_dataset(
                         preferred_tag_id = int(row["preferred_tag_id"])
 
                         referenced_as: str | None = None
-                        missing_id: int | None = None
+                        missing_ref_id: int | None = None
                         if tag_id in missing_set:
                             referenced_as = "tag_id"
-                            missing_id = tag_id
+                            missing_ref_id = tag_id
                         elif preferred_tag_id in missing_set:
                             referenced_as = "preferred_tag_id"
-                            missing_id = preferred_tag_id
+                            missing_ref_id = preferred_tag_id
                         else:
                             continue
 
-                        placeholder_tag = f"__missing_tag_id_{missing_id}__"
+                        placeholder_tag = f"__missing_tag_id_{missing_ref_id}__"
                         created_missing_tags.append(
                             {
                                 "referenced_as": referenced_as,
-                                "missing_id": missing_id,
+                                "missing_id": missing_ref_id,
                                 "format_id": int(row["format_id"]),
                                 "type_id": int(row["type_id"]),
                                 "alias": int(row["alias"]),
@@ -2059,7 +2078,7 @@ def build_dataset(
                         )
 
                 # TAGS 登録
-                existing_tags: set[str] = set()
+                existing_tags.clear()
                 for row in df_tags.to_dicts():
                     conn.execute(
                         "INSERT INTO TAGS (tag_id, tag, source_tag, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -2156,18 +2175,18 @@ def build_dataset(
 
             # tag_id -> tag のマッピング（後続のTAG_STATUS/USAGE登録で使用）
             cursor = conn.execute("SELECT tag_id, tag FROM TAGS")
-            tags_mapping: dict[str, int] = {row[1]: row[0] for row in cursor.fetchall()}
+            tags_mapping = {row[1]: row[0] for row in cursor.fetchall()}
 
         else:
             # Phase 1 スキップ: 既存DBからtags_mapping等を読み取り
             logger.info("[Phase 1] Skipped (base_db_path specified). Loading existing tags from base DB.")
             cursor = conn.execute("SELECT tag FROM TAGS")
-            existing_tags: set[str] = {row[0] for row in cursor.fetchall()}
+            existing_tags = {row[0] for row in cursor.fetchall()}
             cursor = conn.execute("SELECT MAX(tag_id) FROM TAGS")
             max_tag_id = cursor.fetchone()[0]
             next_tag_id = (max_tag_id or 0) + 1
             cursor = conn.execute("SELECT tag_id, tag FROM TAGS")
-            tags_mapping: dict[str, int] = {row[1]: row[0] for row in cursor.fetchall()}
+            tags_mapping = {row[1]: row[0] for row in cursor.fetchall()}
             source_effects.append(
                 {
                     "source": "base_db",
@@ -2464,9 +2483,9 @@ def build_dataset(
                             )
                         )
                         if len(new_tags_df) > 0:
-                            max_tag_id = new_tags_df["tag_id"].max()
+                            max_tag_id = _safe_int(new_tags_df["tag_id"].max())
                             if max_tag_id is not None:
-                                next_tag_id = int(max_tag_id) + 1
+                                next_tag_id = max_tag_id + 1
 
                     # 2) TAG_STATUS / TAG_USAGE
                     st_rows: list[tuple[int, int, int, int, int, int, str | None, str | None]] = []
@@ -2630,8 +2649,8 @@ def build_dataset(
                     rows_read_total = 0
                     translation_rows_total = 0
 
-                    adapter = SiteTagsAdapter(sqlite_path, format_id=format_id)
-                    for chunk in adapter.iter_chunks(chunk_size=50_000):
+                    site_tags_adapter = SiteTagsAdapter(sqlite_path, format_id=format_id)
+                    for chunk in site_tags_adapter.iter_chunks(chunk_size=50_000):
                         df = chunk.df
                         rows_read_total += int(df.height)
 
@@ -2698,13 +2717,13 @@ def build_dataset(
                             )
                         )
                         if len(new_tags_df) > 0:
-                            max_tag_id = new_tags_df["tag_id"].max()
+                            max_tag_id = _safe_int(new_tags_df["tag_id"].max())
                             if max_tag_id is not None:
-                                next_tag_id = int(max_tag_id) + 1
+                                next_tag_id = max_tag_id + 1
 
                         # 2) TAG_STATUS / TAG_USAGE / TAG_TRANSLATIONS
-                        st_rows: list[tuple[int, int, int, int, int, int, str | None, str | None]] = []
-                        usage_rows: list[tuple[int, int, int, str | None]] = []
+                        st_rows_site: list[tuple[int, int, int, int, int, int, str | None, str | None]] = []
+                        usage_rows_site: list[tuple[int, int, int, str | None]] = []
 
                         source_tags = df["source_tag"].to_list()
                         deprecated_list = df["deprecated_tags"].to_list()
@@ -2761,7 +2780,7 @@ def build_dataset(
                                 tags_mapping=tags_mapping,
                             ):
                                 is_alias = 1 if rec["alias"] else 0
-                                st_rows.append(
+                                st_rows_site.append(
                                     (
                                         rec["tag_id"],
                                         rec["format_id"],
@@ -2780,16 +2799,16 @@ def build_dataset(
                                     count_i = int(cnt)
                                 except (TypeError, ValueError):
                                     continue
-                                usage_rows.append(
+                                usage_rows_site.append(
                                     (canonical_tag_id, fmt_i, count_i, canonical_source_updated_at)
                                 )
 
-                        if st_rows:
-                            conn.executemany(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, st_rows)
+                        if st_rows_site:
+                            conn.executemany(_TAG_STATUS_UPSERT_IF_CHANGED_SQL, st_rows_site)
                             conn.commit()
 
-                        if usage_rows:
-                            for tag_id, fmt_i, count_i, ts in usage_rows:
+                        if usage_rows_site:
+                            for tag_id, fmt_i, count_i, ts in usage_rows_site:
                                 conn.execute(
                                     _TAG_USAGE_COUNTS_UPSERT_IF_GREATER_SQL,
                                     (tag_id, fmt_i, count_i, ts, ts),

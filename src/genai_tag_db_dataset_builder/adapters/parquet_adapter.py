@@ -46,6 +46,7 @@ class Parquet_Adapter(BaseAdapter):
     def _normalize_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         """列名とsource_tag表記を標準形に正規化する（tag → source_tag 等）."""
         if "tag" in df.columns and "source_tag" not in df.columns:
+            signals: dict[str, object]
             # overrides優先チェック
             override_type = self.overrides.get(self.file_path, "tag") if self.overrides else None
 
