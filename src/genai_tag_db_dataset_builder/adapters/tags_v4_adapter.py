@@ -113,7 +113,11 @@ class Tags_v4_Adapter(BaseAdapter):
 
         if len(remap_rows) > 0:
             remap: dict[int, int] = dict(
-                zip(remap_rows["tag_id"].to_list(), remap_rows["canonical_tag_id"].to_list())
+                zip(
+                    remap_rows["tag_id"].to_list(),
+                    remap_rows["canonical_tag_id"].to_list(),
+                    strict=False,
+                )
             )
 
             def _remap_id(v: int) -> int:
@@ -223,7 +227,7 @@ class Tags_v4_Adapter(BaseAdapter):
 
         return conflicts
 
-    def validate(self, df: pl.DataFrame) -> bool:
+    def validate(self, _df: pl.DataFrame) -> bool:
         """データ整合性検証（tags_v4.db は既存DBなので基本 True）."""
         return True
 

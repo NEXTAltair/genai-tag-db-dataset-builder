@@ -90,9 +90,8 @@ class ColumnTypeOverrides:
         # パス正規化して再試行（相対パス対応）
         normalized_path = Path(file_path_str).as_posix()
         for override_path, columns in self._overrides.items():
-            if Path(override_path).as_posix() == normalized_path:
-                if column_name in columns:
-                    return TagColumnType(columns[column_name])
+            if Path(override_path).as_posix() == normalized_path and column_name in columns:
+                return TagColumnType(columns[column_name])
 
         return None
 

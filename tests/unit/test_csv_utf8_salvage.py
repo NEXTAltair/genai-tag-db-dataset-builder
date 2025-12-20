@@ -47,4 +47,4 @@ def test_read_csv_best_effort_headerless_schema_inference(tmp_path: Path) -> Non
         bad_utf8_report_dir=tmp_path / "out",
     )
     assert df is not None
-    assert set(["source_tag", "type_id", "count", "deprecated_tags"]).issubset(set(df.columns))
+    assert {"source_tag", "type_id", "count", "deprecated_tags"}.issubset(set(df.columns))

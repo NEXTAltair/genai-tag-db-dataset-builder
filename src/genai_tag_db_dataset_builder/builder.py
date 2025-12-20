@@ -229,9 +229,10 @@ def _find_tagdb_csv_root(sources_dir: Path) -> Path | None:
         sources_dir,
     ]
     for c in candidates:
-        if c.exists() and c.is_dir():
-            if (c / "A").exists() or any(p.suffix.lower() == ".csv" for p in c.glob("*.csv")):
-                return c
+        if c.exists() and c.is_dir() and (
+            (c / "A").exists() or any(p.suffix.lower() == ".csv" for p in c.glob("*.csv"))
+        ):
+            return c
     return None
 
 
@@ -331,13 +332,14 @@ def _should_include_source(
     exclude_patterns: list[str],
 ) -> bool:
     """source_name を取り込むかどうかを判定する."""
-    if include_exact or include_patterns:
-        if not _match_source(source_name, exact=include_exact, patterns=include_patterns):
-            return False
-    if exclude_exact or exclude_patterns:
-        if _match_source(source_name, exact=exclude_exact, patterns=exclude_patterns):
-            return False
-    return True
+    if (include_exact or include_patterns) and not _match_source(
+        source_name, exact=include_exact, patterns=include_patterns
+    ):
+        return False
+    return not (
+        (exclude_exact or exclude_patterns)
+        and _match_source(source_name, exact=exclude_exact, patterns=exclude_patterns)
+    )
 
 
 def _infer_source_timestamp_utc_midnight(path: Path) -> str | None:
@@ -576,6 +578,7 @@ def _insert_tags(conn: sqlite3.Connection, tags_df: pl.DataFrame) -> None:
             tags_df["tag_id"].to_list(),
             tags_df["source_tag"].to_list(),
             tags_df["tag"].to_list(),
+            strict=False,
         )
     )
     for chunk in _chunked(rows, 10_000):
@@ -1091,7 +1094,7 @@ def _repair_placeholder_tag_ids(conn: sqlite3.Connection) -> list[dict[str, obje
             continue
 
         status_map: dict[int, int] = {}
-        for format_id, type_id, alias, preferred_tag_id in status_rows:
+        for format_id, type_id, _alias, preferred_tag_id in status_rows:
             if int(preferred_tag_id) != int(missing_id):
                 status_map[int(format_id)] = int(preferred_tag_id)
             if int(preferred_tag_id) == int(missing_id):
@@ -1302,7 +1305,7 @@ def _repair_non_e621_prefix_preferred(conn: sqlite3.Connection) -> list[dict[str
         """
     ).fetchall()
 
-    for tag_id, format_id, type_id, alias, preferred_tag_id, tag, preferred_tag in rows:
+    for tag_id, format_id, _type_id, alias, preferred_tag_id, tag, preferred_tag in rows:
         base = _strip_category_prefix(preferred_tag) or _strip_category_prefix(tag)
         if not base:
             continue
@@ -2009,7 +2012,7 @@ def build_dataset(
 
                 # tag_id -> tag を tags_v4 の TAGS から引ける範囲で保持（レポート用）
                 tags_v4_id_to_tag: dict[int, str] = dict(
-                    zip(df_tags["tag_id"].to_list(), df_tags["tag"].to_list())
+                    zip(df_tags["tag_id"].to_list(), df_tags["tag"].to_list(), strict=False)
                 )
 
                 for missing_id in missing_ids:
@@ -2449,10 +2452,19 @@ def build_dataset(
 
                             added_tags = new_tags_df["tag"].to_list()
                             existing_tags.update(added_tags)
-                            tags_mapping.update(
-                                dict(zip(new_tags_df["tag"].to_list(), new_tags_df["tag_id"].to_list()))
+                        tags_mapping.update(
+                            dict(
+                                zip(
+                                    new_tags_df["tag"].to_list(),
+                                    new_tags_df["tag_id"].to_list(),
+                                    strict=False,
+                                )
                             )
-                            next_tag_id = int(new_tags_df["tag_id"].max()) + 1
+                        )
+                        if len(new_tags_df) > 0:
+                            max_tag_id = new_tags_df["tag_id"].max()
+                            if max_tag_id is not None:
+                                next_tag_id = int(max_tag_id) + 1
 
                     # 2) TAG_STATUS / TAG_USAGE
                     st_rows: list[tuple[int, int, int, int, int, int, str | None, str | None]] = []
@@ -2466,7 +2478,7 @@ def build_dataset(
                     counts = chunk["count"].to_list() if "count" in chunk.columns else [None] * len(chunk)
 
                     for raw_source_tag, dep, fmt, tid, cnt in zip(
-                        source_tags, deprecated_list, format_ids, type_ids, counts
+                        source_tags, deprecated_list, format_ids, type_ids, counts, strict=False
                     ):
                         canonical_tag = normalize_tag(str(raw_source_tag))
                         canonical_tag_id = tags_mapping.get(canonical_tag)
@@ -2674,15 +2686,19 @@ def build_dataset(
                                 conn.commit()
                                 added_tags = new_tags_df["tag"].to_list()
                                 existing_tags.update(added_tags)
-                                tags_mapping.update(
-                                    dict(
-                                        zip(
-                                            new_tags_df["tag"].to_list(),
-                                            new_tags_df["tag_id"].to_list(),
-                                        )
-                                    )
+                        tags_mapping.update(
+                            dict(
+                                zip(
+                                    new_tags_df["tag"].to_list(),
+                                    new_tags_df["tag_id"].to_list(),
+                                    strict=False,
                                 )
-                                next_tag_id = int(new_tags_df["tag_id"].max()) + 1
+                            )
+                        )
+                        if len(new_tags_df) > 0:
+                            max_tag_id = new_tags_df["tag_id"].max()
+                            if max_tag_id is not None:
+                                next_tag_id = int(max_tag_id) + 1
 
                         # 2) TAG_STATUS / TAG_USAGE / TAG_TRANSLATIONS
                         st_rows: list[tuple[int, int, int, int, int, int, str | None, str | None]] = []
@@ -2715,6 +2731,7 @@ def build_dataset(
                             created_ats,
                             updated_ats,
                             counts,
+                            strict=False,
                         ):
                             canonical_tag = normalize_tag(str(raw_source_tag))
                             canonical_tag_id = tags_mapping.get(canonical_tag)

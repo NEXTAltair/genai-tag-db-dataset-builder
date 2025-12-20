@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -95,7 +95,7 @@ def fetch_github_repo(source: dict, dest: Path, force: bool = False) -> dict:
                     "kind": "github",
                     "url": url,
                     "commit_hash": commit_hash,
-                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "fetched_at": datetime.now(UTC).isoformat(),
                     "skipped": False,
                 }
 
@@ -120,7 +120,7 @@ def fetch_github_repo(source: dict, dest: Path, force: bool = False) -> dict:
         "kind": "github",
         "url": url,
         "commit_hash": commit_hash,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(UTC).isoformat(),
         "skipped": False,
     }
 
@@ -177,7 +177,7 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
                     "kind": "hf_dataset",
                     "repo_id": repo_id,
                     "revision": revision,
-                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "fetched_at": datetime.now(UTC).isoformat(),
                     "skipped": True,
                 }
         if revision is None:
@@ -187,7 +187,7 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
                 "kind": "hf_dataset",
                 "repo_id": repo_id,
                 "revision": "unknown",
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "fetched_at": datetime.now(UTC).isoformat(),
                 "skipped": True,
             }
         logger.info(f"Existing download is stale or missing sha, re-downloading: {dest}")
@@ -225,7 +225,7 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
         "kind": "hf_dataset",
         "repo_id": repo_id,
         "revision": revision or "unknown",
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(UTC).isoformat(),
         "skipped": False,
     }
 
@@ -270,7 +270,7 @@ def fetch_all_sources(sources_yml: Path, external_sources_dir: Path, force: bool
                     "id": source_id,
                     "kind": kind,
                     "error": str(e),
-                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "fetched_at": datetime.now(UTC).isoformat(),
                     "skipped": False,
                 }
             )

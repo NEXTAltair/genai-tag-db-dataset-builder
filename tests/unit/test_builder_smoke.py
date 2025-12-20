@@ -123,7 +123,7 @@ def test_builder_builds_minimal_db(tmp_path: Path) -> None:
     conn = sqlite3.connect(output_db)
     try:
         tags = conn.execute("SELECT tag, source_tag FROM TAGS").fetchall()
-        tags_by_tag = {t: s for (t, s) in tags}
+        tags_by_tag = dict(tags)
         assert "witch" in tags_by_tag
         assert tags_by_tag["witch"] == "witch"
         assert "new tag" in tags_by_tag  # underscore -> space

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
@@ -36,7 +36,7 @@ def create_build_manifest(
         "build_info": {
             "version": version,
             "target": target,
-            "built_at": datetime.now(timezone.utc).isoformat(),
+            "built_at": datetime.now(UTC).isoformat(),
             "builder_version": builder_version,
         },
         "sources": sources_metadata,

@@ -114,10 +114,7 @@ def classify_tag_column(
         "normalize_change_threshold": 0.5,  # SOURCE判定の強シグナル
         "unknown_margin": 0.1,  # 低い/高いの“端”を判定する幅
     }
-    if thresholds is None:
-        thresholds = default_thresholds
-    else:
-        thresholds = {**default_thresholds, **thresholds}
+    thresholds = default_thresholds if thresholds is None else {**default_thresholds, **thresholds}
 
     underscore_ratio = calculate_underscore_ratio(tags)
     escaped_paren_ratio = detect_escaped_parentheses(tags)

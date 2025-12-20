@@ -67,10 +67,7 @@ class P1atdevDanbooruJaTagPairAdapter:
     def read(self) -> pl.DataFrame:
         if _is_local_dataset_path(self.repo_id_or_path):
             ds_obj = load_from_disk(self.repo_id_or_path)
-            if isinstance(ds_obj, DatasetDict):
-                ds = _first_split(ds_obj)
-            else:
-                ds = ds_obj
+            ds = _first_split(ds_obj) if isinstance(ds_obj, DatasetDict) else ds_obj
         else:
             loaded = load_dataset(self.repo_id_or_path, revision=self.revision)
             ds = _first_split(loaded)

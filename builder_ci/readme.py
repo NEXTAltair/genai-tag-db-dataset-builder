@@ -7,7 +7,6 @@ from pathlib import Path
 
 import yaml
 
-
 LICENSE_BY_TARGET = {
     "cc0": "cc0-1.0",
     "mit": "mit",

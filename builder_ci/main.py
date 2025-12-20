@@ -7,10 +7,10 @@ import csv
 import os
 import shutil
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 from huggingface_hub import HfApi, snapshot_download
 from loguru import logger
@@ -31,9 +31,9 @@ src_dir = _module_root / "src"
 if src_dir.exists():
     sys.path.insert(0, str(src_dir))
 
-from genai_tag_db_dataset_builder.builder import build_dataset
-from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks
-from genai_tag_db_dataset_builder.tools.migrate_db import migrate
+from genai_tag_db_dataset_builder.builder import build_dataset  # noqa: E402
+from genai_tag_db_dataset_builder.tools.migrate_db import migrate  # noqa: E402
+from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -164,7 +164,7 @@ def _download_base_db(repo_id: str, dest_dir: Path, force: bool = False) -> dict
                         "path": sqlite_files[-1],
                         "repo_id": repo_id,
                         "revision": revision,
-                        "downloaded_at": datetime.now(timezone.utc).isoformat(),
+                        "downloaded_at": datetime.now(UTC).isoformat(),
                         "skipped": True,
                     }
         logger.info(f"Base DB revision changed or missing, re-downloading: {repo_id}")
@@ -196,7 +196,7 @@ def _download_base_db(repo_id: str, dest_dir: Path, force: bool = False) -> dict
         "path": sqlite_files[-1],
         "repo_id": repo_id,
         "revision": revision,
-        "downloaded_at": datetime.now(timezone.utc).isoformat(),
+        "downloaded_at": datetime.now(UTC).isoformat(),
         "skipped": False,
     }
 
@@ -516,7 +516,7 @@ def main() -> None:
     )
     p.add_argument(
         "--version",
-        default=datetime.now(timezone.utc).strftime("v%Y.%m.%d"),
+        default=datetime.now(UTC).strftime("v%Y.%m.%d"),
         help="Dataset version string",
     )
     p.add_argument("--force", action="store_true", help="Force rebuild and refetch")

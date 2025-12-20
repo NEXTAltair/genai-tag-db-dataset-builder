@@ -62,15 +62,14 @@ def is_kaomoji(text: str) -> bool:
         return False
 
     # ^_^ / 0_0 / >_< などのアンダースコア区切り顔文字
-    if _FACE_UNDERSCORE.match(s):
+    if _FACE_UNDERSCORE.match(s) and (
+        any(ch in s for ch in "^;:<>=")
+        or any(ch.isdigit() for ch in s)
+        or "o" in s.lower()
+        or "x" in s.lower()
+    ):
         # `au_ra` のような誤検出を避けるため、記号/数字などのシグナルを要求
-        if (
-            any(ch in s for ch in "^;:<>=")
-            or any(ch.isdigit() for ch in s)
-            or "o" in s.lower()
-            or "x" in s.lower()
-        ):
-            return True
+        return True
 
     alnum = 0
     punct = 0
@@ -86,10 +85,7 @@ def is_kaomoji(text: str) -> bool:
     # 最終フォールバック（かなり保守的）
     # - 顔文字っぽい記号を含む
     # - 非英数字が多い
-    if any(ch in s for ch in "^;:<>=") and (punct >= 2) and (alnum <= 3) and (not has_space):
-        return True
-
-    return False
+    return any(ch in s for ch in "^;:<>=") and (punct >= 2) and (alnum <= 3) and (not has_space)
 
 
 def _escape_parentheses(text: str) -> str:
