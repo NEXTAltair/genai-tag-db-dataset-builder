@@ -32,6 +32,7 @@ if src_dir.exists():
 
 from genai_tag_db_dataset_builder.builder import build_dataset
 from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks
+from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 @dataclass(frozen=True)
 class TargetConfig:
     name: str
@@ -394,6 +395,8 @@ def orchestrate(
 
     base_info = _download_base_db(base_repo_cc0, base_db_dir, force=force)
     base_db_path = Path(base_info["path"])
+    logger.info(f"Applying migrations to base DB cache: {base_db_path}")
+    migrate(base_db_path)
     base_db_info = {
         "repo_id": base_repo_cc0,
         "revision": base_info.get("revision"),
