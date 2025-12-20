@@ -1,4 +1,4 @@
-﻿"""CI README generator."""
+"""CI README generator."""
 
 from __future__ import annotations
 

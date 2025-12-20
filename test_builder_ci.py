@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Phase 8.1 scaffold test."""
 
 from __future__ import annotations
@@ -27,9 +27,7 @@ def main() -> None:
     sources = load_sources_config(sources_yml)
     print(f"  enabled sources: {len(sources)}")
     for src in sources:
-        print(
-            f"  - {src['id']} ({src.get('license', 'unknown')}) applies_to={src.get('applies_to', [])}"
-        )
+        print(f"  - {src['id']} ({src.get('license', 'unknown')}) applies_to={src.get('applies_to', [])}")
 
     print("\n[2] build_manifest.json write")
     sources_metadata = [

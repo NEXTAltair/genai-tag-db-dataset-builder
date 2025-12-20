@@ -25,6 +25,7 @@ from builder_ci.manifest import (
 )
 from builder_ci.publisher import publish_dataset
 from builder_ci.readme import generate_readme
+
 _module_root = Path(__file__).resolve().parents[1]
 src_dir = _module_root / "src"
 if src_dir.exists():
@@ -33,6 +34,8 @@ if src_dir.exists():
 from genai_tag_db_dataset_builder.builder import build_dataset
 from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate
+
+
 @dataclass(frozen=True)
 class TargetConfig:
     name: str
@@ -63,9 +66,7 @@ def _select_sources_for_target(sources: list[dict], target: str) -> list[dict]:
     return selected
 
 
-def _fetch_sources(
-    sources: list[dict], external_dir: Path, force: bool = False
-) -> list[dict]:
+def _fetch_sources(sources: list[dict], external_dir: Path, force: bool = False) -> list[dict]:
     results: list[dict] = []
     for src in sources:
         dest = external_dir / src["id"]
@@ -129,9 +130,7 @@ def _stage_translation_csvs(
                 staged.append(dest_path.relative_to(sources_dir).as_posix())
                 matched = True
         if not matched:
-            logger.warning(
-                f"No translation_ja CSV matched for {src.get('id')} under {src_root}"
-            )
+            logger.warning(f"No translation_ja CSV matched for {src.get('id')} under {src_root}")
     return staged
 
 
@@ -158,9 +157,7 @@ def _download_base_db(repo_id: str, dest_dir: Path, force: bool = False) -> dict
         if sha_path.exists():
             existing = sha_path.read_text(encoding="utf-8").strip()
             if existing == revision:
-                sqlite_files = sorted(
-                    dest_dir.glob("**/*.sqlite"), key=lambda p: p.stat().st_mtime
-                )
+                sqlite_files = sorted(dest_dir.glob("**/*.sqlite"), key=lambda p: p.stat().st_mtime)
                 if sqlite_files:
                     logger.info(f"Base DB already up to date: {repo_id} ({revision[:8]})")
                     return {
@@ -241,9 +238,7 @@ def _health_to_manifest(summary: dict) -> tuple[dict | None, dict | None]:
     health = {
         "quick_check": summary.get("quick_check"),
         "foreign_key_violations": _coerce_int(summary.get("foreign_key_violations")),
-        "missing_type_format_mapping_pairs": _coerce_int(
-            summary.get("missing_type_format_mapping_pairs")
-        ),
+        "missing_type_format_mapping_pairs": _coerce_int(summary.get("missing_type_format_mapping_pairs")),
         "orphan_tag_status": _coerce_int(summary.get("orphan_tag_status")),
         "orphan_usage_counts": _coerce_int(summary.get("orphan_usage_counts")),
         "orphan_translations": _coerce_int(summary.get("orphan_translations")),
@@ -286,13 +281,9 @@ def _build_target(
         comparison = {"changed": [{"id": "manifest_missing"}], "added": [], "removed": [], "unchanged": []}
     else:
         comparison = compare_source_revisions(manifest_existing, source_meta)
-        if (
-            base_db_info.get("revision")
-            and manifest_existing.get("build_info", {})
-            .get("base_db", {})
-            .get("revision")
-            != base_db_info.get("revision")
-        ):
+        if base_db_info.get("revision") and manifest_existing.get("build_info", {}).get("base_db", {}).get(
+            "revision"
+        ) != base_db_info.get("revision"):
             comparison["changed"].append({"id": "base_db"})
     if not should_rebuild(comparison, force=force):
         logger.info(f"No source changes for {target.name}, skipping build.")

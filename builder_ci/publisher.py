@@ -1,4 +1,4 @@
-﻿"""CI Hugging Face publisher."""
+"""CI Hugging Face publisher."""
 
 from __future__ import annotations
 

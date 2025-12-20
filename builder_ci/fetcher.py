@@ -171,9 +171,7 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
         if revision and sha_path.exists():
             existing_sha = sha_path.read_text(encoding="utf-8").strip()
             if existing_sha == revision:
-                logger.info(
-                    f"Directory already exists with matching revision, skipping download: {dest}"
-                )
+                logger.info(f"Directory already exists with matching revision, skipping download: {dest}")
                 return {
                     "id": source_id,
                     "kind": "hf_dataset",
@@ -183,9 +181,7 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
                     "skipped": True,
                 }
         if revision is None:
-            logger.warning(
-                f"Revision unavailable; keeping existing download without update: {dest}"
-            )
+            logger.warning(f"Revision unavailable; keeping existing download without update: {dest}")
             return {
                 "id": source_id,
                 "kind": "hf_dataset",
@@ -234,9 +230,7 @@ def fetch_hf_dataset(source: dict, dest: Path, force: bool = False) -> dict:
     }
 
 
-def fetch_all_sources(
-    sources_yml: Path, external_sources_dir: Path, force: bool = False
-) -> list[dict]:
+def fetch_all_sources(sources_yml: Path, external_sources_dir: Path, force: bool = False) -> list[dict]:
     """全ソースを取得してメタデータリストを返す.
 
     Args:
