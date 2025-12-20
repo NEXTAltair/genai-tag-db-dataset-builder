@@ -229,8 +229,10 @@ def _find_tagdb_csv_root(sources_dir: Path) -> Path | None:
         sources_dir,
     ]
     for c in candidates:
-        if c.exists() and c.is_dir() and (
-            (c / "A").exists() or any(p.suffix.lower() == ".csv" for p in c.glob("*.csv"))
+        if (
+            c.exists()
+            and c.is_dir()
+            and ((c / "A").exists() or any(p.suffix.lower() == ".csv" for p in c.glob("*.csv")))
         ):
             return c
     return None
