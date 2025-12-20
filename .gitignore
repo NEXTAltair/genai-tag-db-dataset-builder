@@ -209,5 +209,8 @@ __marimo__/
 # builder outputs
 out_db/
 out_db_*/
+ci_output/
 test_output/
 Kaomoji_txt/
+base_dbs/
+external_sources/
