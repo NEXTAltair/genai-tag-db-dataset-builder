@@ -1,18 +1,20 @@
-# genai-tag-db-dataset-builder
+﻿# genai-tag-db-dataset-builder
 
 Dataset builder for unified generative AI tag database.
+生成AI向け統合タグデータベースを構築するためのビルダーです。
 
 ## Overview
 
 This package builds a unified tag database by merging multiple data sources (tags_v4.db, HuggingFace datasets, local CSV files) into a single optimized SQLite database compatible with genai-tag-db-tools.
+複数のデータソース（tags_v4.db / Hugging Face datasets / ローカルCSV）を統合し、genai-tag-db-tools と互換なSQLiteデータベースを生成します。
 
 ## Features
 
-- **Multi-source integration**: Merges tags from Danbooru, E621, Derpibooru, and other platforms
-- **Data repair**: Automatically fixes broken CSV files and data inconsistencies
-- **Conflict detection**: Generates CSV reports for manual review of type_id conflicts and alias changes
-- **SQLite optimization**: Applies build-time and distribution-time PRAGMA settings for performance
-- **Schema compatibility**: 100% compatible with genai-tag-db-tools database schema
+- **Multi-source integration**: Merges tags from Danbooru, E621, Derpibooru, and other platforms / 複数サイトのタグを統合
+- **Data repair**: Automatically fixes broken CSV files and data inconsistencies / CSVの破損や不整合を自動修復
+- **Conflict detection**: Generates CSV reports for manual review of type_id conflicts and alias changes / 競合レポートをCSV出力
+- **SQLite optimization**: Applies build-time and distribution-time PRAGMA settings for performance / SQLite最適化PRAGMAを適用
+- **Schema compatibility**: 100% compatible with genai-tag-db-tools database schema / genai-tag-db-tools互換スキーマ
 
 ## Installation
 
@@ -69,10 +71,11 @@ tests/
 
 - **Main Design Plan**: `.serena/memories/dataset_builder_design_plan_2025_12_13.md`
 - **Core Algorithm Fix**: `.serena/memories/dataset_builder_core_algorithm_fix_2025_12_13.md`
+設計資料は `.serena/memories/` 以下に集約されています。
 
 ## Implementation Status
 
-**Phase 0: Foundation Setup** ✅ (Week 1)
+**Phase 0: Foundation Setup** (Week 1)
 - [x] Package name unification: genai-tag-db-dataset-builder
 - [x] pyproject.toml configuration
 - [x] Basic directory structure
@@ -91,7 +94,8 @@ tests/
 - [ ] detect_conflicts() implementation (tag + format_id JOIN)
 
 See design plan for full implementation roadmap.
+詳細なロードマップは設計資料を参照してください。
 
 ## License
 
-MIT
+MIT / MITライセンス
