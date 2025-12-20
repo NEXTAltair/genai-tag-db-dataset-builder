@@ -28,7 +28,7 @@ sources:
     enabled: true
 
   # CC-BY-4.0 source: deepghs/site_tags
-  - id: deepghs-site-tags
+  - id: site_tags
     kind: hf_dataset
     repo_id: deepghs/site_tags
     url: https://huggingface.co/datasets/deepghs/site_tags
