@@ -13,11 +13,6 @@ on:
           - cc4
           - all
         default: "cc0"
-      publish:
-        description: "Publish to Hugging Face"
-        required: true
-        type: boolean
-        default: false
       force:
         description: "Force rebuild (ignore revision check)"
         required: true
@@ -77,11 +72,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           VERSION="v$(date -u +%Y.%m.%d).${{ github.run_number }}"
-          PUBLISH_FLAG=""
           FORCE_FLAG=""
-          if [ "${{ inputs.publish }}" = "true" ]; then
-            PUBLISH_FLAG="--publish"
-          fi
           if [ "${{ inputs.force }}" = "true" ]; then
             FORCE_FLAG="--force"
           fi
@@ -97,18 +88,5 @@ jobs:
             --repo-mit "${HF_REPO_MIT}" \
             --repo-cc4 "${HF_REPO_CC4}" \
             --version "${VERSION}" \
-            ${FORCE_FLAG} \
-            ${PUBLISH_FLAG}
-
-      - name: Upload artifacts (when not published)
-        if: ${{ !inputs.publish }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: tag-dataset-${{ inputs.target }}
-          path: |
-            ci_output/out_db_${{ inputs.target }}/*.sqlite
-            ci_output/out_db_${{ inputs.target }}/README.md
-            ci_output/out_db_${{ inputs.target }}/parquet_danbooru/
-            ci_output/out_db_${{ inputs.target }}/report/
-            ci_output/out_db_${{ inputs.target }}/build_manifest.json
-          retention-days: 30
+            --publish \
+            ${FORCE_FLAG}
