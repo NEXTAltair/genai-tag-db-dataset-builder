@@ -34,6 +34,7 @@ from genai_tag_db_dataset_builder.core.exceptions import NormalizedSourceSkipErr
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
 from genai_tag_db_dataset_builder.core.overrides import ColumnTypeOverrides, load_overrides
+from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 
 logger = logging.getLogger(__name__)
 
@@ -1971,6 +1972,8 @@ def build_dataset(
         if output_path.exists():
             output_path.unlink()
         shutil.copy2(base_db_path, output_path)
+        logger.info("[Base DB] Applying migrations to copied database.")
+        migrate(output_path)
         logger.info("[Base DB] Base database copied. Skipping Phase 0/1.")
 
     # Phase 0: DB 作成・マスターデータ登録（base_db_path 指定時はスキップ）
