@@ -11,7 +11,10 @@ on:
         description: 'Upload to HuggingFace'
         required: true
         type: boolean
-        default: false
+    default: false
+
+permissions:
+  contents: write
 
 env:
   DATASET_NAME: unified-tag-database

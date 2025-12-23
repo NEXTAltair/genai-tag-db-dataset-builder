@@ -200,6 +200,7 @@ def create_database(db_path: Path | str) -> None:
         logger.warning(f"Database already exists: {db_path}")
         return
 
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"Creating database: {db_path}")
 
     conn = sqlite3.connect(db_path)
