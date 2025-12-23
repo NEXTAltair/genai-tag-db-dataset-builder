@@ -11,11 +11,17 @@ on:
         description: 'Upload to HuggingFace'
         required: true
         type: boolean
-        default: false
+    default: false
+
+permissions:
+  contents: write
 
 env:
   DATASET_NAME: unified-tag-database
   HF_REPO: NEXTAltair/unified-tag-database
+  HF_REPO_CC0: NEXTAltair/genai-image-tag-db
+  HF_REPO_MIT: NEXTAltair/genai-image-tag-db-mit
+  HF_REPO_CC4: NEXTAltair/genai-image-tag-db-CC4
 
 jobs:
   build:
@@ -41,66 +47,49 @@ jobs:
         run: |
           uv sync --dev
 
-      - name: Download source data
+      - name: Run CI orchestrator (build CC0 -> MIT/CC4)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          mkdir -p data/sources
-          # Download tags_v4.db
-          wget -O data/sources/tags_v4.db https://huggingface.co/datasets/deepghs/site_tags/resolve/main/tags_v4.db || true
-
-      - name: Run dataset builder
-        run: |
-          uv run python -m genai_tag_db_dataset_builder.builder \
-            --output data/output/unified_tags.db \
-            --version ${{ github.event.inputs.version }}
-
-      - name: Verify database integrity
-        run: |
-          uv run python -c "
-          import sqlite3
-          conn = sqlite3.connect('data/output/unified_tags.db')
-          cursor = conn.execute('PRAGMA integrity_check')
-          result = cursor.fetchone()[0]
-          assert result == 'ok', f'Database integrity check failed: {result}'
-          print('Database integrity check passed')
-          conn.close()
-          "
-
-      - name: Generate metadata
-        run: |
-          uv run python -m genai_tag_db_dataset_builder.metadata \
-            --db data/output/unified_tags.db \
-            --output data/output/metadata.json \
-            --version ${{ github.event.inputs.version }}
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.upload_to_hf }}" = "true" ]; then
+            PUBLISH_FLAG="--publish"
+          else
+            PUBLISH_FLAG=""
+          fi
+          uv run python -m builder_ci.main \
+            --target all \
+            --sources-yml builder_ci/sources.yml \
+            --sources-dir . \
+            --output-root ci_output \
+            --external-sources-dir external_sources \
+            --base-db-dir base_dbs/cc0 \
+            --base-cc0-repo "${HF_REPO_CC0}" \
+            --repo-cc0 "${HF_REPO_CC0}" \
+            --repo-mit "${HF_REPO_MIT}" \
+            --repo-cc4 "${HF_REPO_CC4}" \
+            --version "${{ github.event.inputs.version }}" \
+            ${PUBLISH_FLAG} \
+            ${FORCE_FLAG}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: unified-tag-database-${{ github.event.inputs.version }}
+          name: tag-database-${{ github.event.inputs.version }}
           path: |
-            data/output/unified_tags.db
-            data/output/metadata.json
+            ci_output/out_db_cc0/genai-image-tag-db-cc0.sqlite
+            ci_output/out_db_cc0/build_manifest.json
+            ci_output/out_db_cc0/README.md
+            ci_output/out_db_cc0/parquet_danbooru
+            ci_output/out_db_cc0/report
+            ci_output/out_db_mit/genai-image-tag-db-mit.sqlite
+            ci_output/out_db_mit/build_manifest.json
+            ci_output/out_db_mit/README.md
+            ci_output/out_db_mit/parquet_danbooru
+            ci_output/out_db_mit/report
+            ci_output/out_db_cc4/genai-image-tag-db-cc4.sqlite
+            ci_output/out_db_cc4/build_manifest.json
+            ci_output/out_db_cc4/README.md
+            ci_output/out_db_cc4/parquet_danbooru
+            ci_output/out_db_cc4/report
           retention-days: 30
-
-      - name: Upload to HuggingFace
-        if: ${{ github.event.inputs.upload_to_hf == 'true' }}
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          uv run python -m genai_tag_db_dataset_builder.upload \
-            --db data/output/unified_tags.db \
-            --metadata data/output/metadata.json \
-            --repo ${{ env.HF_REPO }} \
-            --version ${{ github.event.inputs.version }} \
-            --token $HF_TOKEN
-
-      - name: Create release
-        if: ${{ github.event.inputs.upload_to_hf == 'true' }}
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: Release ${{ github.event.inputs.version }}
-          draft: false
-          prerelease: false
-          files: |
-            data/output/unified_tags.db
-            data/output/metadata.json
