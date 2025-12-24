@@ -332,7 +332,7 @@ def _infer_source_timestamp_utc_midnight(path: Path) -> str | None:
 def _is_authoritative_count_source(path: Path) -> bool:
     """最新スナップショットとして count を上書きするソースかどうか."""
     name = path.name.lower()
-    return bool(re.search(r"^danbooru_\\d{6,8}\\.csv$", name))
+    return bool(re.search(r"^danbooru_\d{6,8}\.csv$", name))
 
 
 def _replace_usage_counts_for_format(
