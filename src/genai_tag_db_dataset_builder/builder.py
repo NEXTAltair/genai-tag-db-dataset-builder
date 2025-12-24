@@ -217,6 +217,21 @@ def _infer_language_code(column_name: str) -> str:
     return lang_map.get(col_lower, col_lower[:2])  # デフォルトは先頭2文字
 
 
+def _split_translation_values(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        out: list[str] = []
+        for v in value:
+            out.extend(_split_translation_values(v))
+        return out
+    text = str(value).strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in text.split(",")]
+    return [p for p in parts if p]
+
+
 def _normalize_language_value(value: str) -> str:
     """DB側の language 値を正規化する（例: japanese -> ja）。"""
     v = str(value).strip()
@@ -2130,18 +2145,35 @@ def build_dataset(
                 # TAG_TRANSLATIONS 登録
                 for row in df_translations.to_dicts():
                     normalized_lang = _normalize_language_value(row["language"])
-                    conn.execute(
-                        "INSERT OR IGNORE INTO TAG_TRANSLATIONS (translation_id, tag_id, language, translation, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        (
-                            row["translation_id"],
-                            row["tag_id"],
-                            normalized_lang,
-                            row["translation"],
-                            row["created_at"],
-                            row["updated_at"],
-                        ),
-                    )
+                    translations = _split_translation_values(row["translation"])
+                    if not translations:
+                        continue
+                    if len(translations) == 1:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO TAG_TRANSLATIONS (translation_id, tag_id, language, translation, created_at, updated_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?)",
+                            (
+                                row["translation_id"],
+                                row["tag_id"],
+                                normalized_lang,
+                                translations[0],
+                                row["created_at"],
+                                row["updated_at"],
+                            ),
+                        )
+                        continue
+                    for item in translations:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO TAG_TRANSLATIONS (tag_id, language, translation, created_at, updated_at) "
+                            "VALUES (?, ?, ?, ?, ?)",
+                            (
+                                row["tag_id"],
+                                normalized_lang,
+                                item,
+                                row["created_at"],
+                                row["updated_at"],
+                            ),
+                        )
 
                 # TAG_USAGE_COUNTS 登録
                 for row in df_usage.to_dicts():
