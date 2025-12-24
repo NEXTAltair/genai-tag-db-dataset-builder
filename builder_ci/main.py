@@ -260,7 +260,6 @@ def _build_target(
     sources_yml: Path,
     version: str,
     force: bool,
-    skip_danbooru_snapshot_replace: bool,
     publish: bool,
     publish_repo_id: str | None,
 ) -> Path:
@@ -302,8 +301,6 @@ def _build_target(
         hf_ja_translation_datasets=hf_ja_datasets,
         parquet_output_dir=target.parquet_dir,
         base_db_path=base_db_path,
-        skip_danbooru_snapshot_replace=skip_danbooru_snapshot_replace,
-        warn_missing_csv_dir=False,
         overwrite=True,
     )
 
@@ -410,7 +407,6 @@ def orchestrate(
             sources_yml=sources_yml,
             version=version,
             force=force,
-            skip_danbooru_snapshot_replace=False,
             publish=publish and target in ["cc0", "all"],
             publish_repo_id=repo_cc0,
         )
@@ -427,7 +423,6 @@ def orchestrate(
             sources_yml=sources_yml,
             version=version,
             force=force,
-            skip_danbooru_snapshot_replace=True,
             publish=publish and target in ["mit", "all"],
             publish_repo_id=repo_mit,
         )
@@ -444,7 +439,6 @@ def orchestrate(
             sources_yml=sources_yml,
             version=version,
             force=force,
-            skip_danbooru_snapshot_replace=True,
             publish=publish and target in ["cc4", "all"],
             publish_repo_id=repo_cc4,
         )
