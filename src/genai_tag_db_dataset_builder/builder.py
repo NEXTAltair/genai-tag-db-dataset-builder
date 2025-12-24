@@ -106,6 +106,20 @@ def _extract_translations(
     """
     results: list[tuple[int, str, str]] = []
 
+    def _split_translation_values(value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            out: list[str] = []
+            for v in value:
+                out.extend(_split_translation_values(v))
+            return out
+        text = str(value).strip()
+        if not text:
+            return []
+        parts = [p.strip() for p in text.split(",")]
+        return [p for p in parts if p]
+
     # tag列から正規化タグ名を取得
     if "tag" not in df.columns and "source_tag" in df.columns:
         tag_col = "source_tag"
@@ -131,10 +145,12 @@ def _extract_translations(
         # 各言語列から翻訳を取得
         for lang_col in lang_columns:
             translation = row.get(lang_col)
-            if translation and isinstance(translation, str) and translation.strip():
+            translations = _split_translation_values(translation)
+            if translations:
                 # 言語コードを推定（japanese → ja等）
                 language = _infer_language_code(lang_col)
-                results.append((tag_id, language, translation.strip()))
+                for item in translations:
+                    results.append((tag_id, language, item))
 
     return results
 
