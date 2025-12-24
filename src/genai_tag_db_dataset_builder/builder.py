@@ -1862,18 +1862,13 @@ def build_dataset(
                         df = df.with_columns(pl.lit(-1).cast(pl.Int64).alias("type_id"))
                     else:
                         df = df.with_columns(
-                            pl.col("type_id")
-                            .cast(pl.Int64, strict=False)
-                            .fill_null(-1)
-                            .alias("type_id")
+                            pl.col("type_id").cast(pl.Int64, strict=False).fill_null(-1).alias("type_id")
                         )
                     if "deprecated_tags" not in df.columns:
                         df = df.with_columns(pl.lit("").alias("deprecated_tags"))
                     else:
                         df = df.with_columns(
-                            pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias(
-                                "deprecated_tags"
-                            )
+                            pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias("deprecated_tags")
                         )
                     if "deprecated" not in df.columns:
                         df = df.with_columns(pl.lit(0).cast(pl.Int64).alias("deprecated"))
