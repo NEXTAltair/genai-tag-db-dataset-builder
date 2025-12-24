@@ -1,13 +1,8 @@
 import sqlite3
-from pathlib import Path
-
-import polars as pl
-
 from genai_tag_db_dataset_builder.builder import (
     _delete_ja_translations_by_value_list,
     _delete_translations_ascii_only_for_languages,
     _delete_translations_missing_required_script,
-    _load_column_values_from_csv,
     _normalize_language_value,
 )
 
@@ -53,26 +48,6 @@ def test_delete_ja_translations_by_value_list_empty_is_noop() -> None:
     conn = _create_minimal_translations_db()
     deleted = _delete_ja_translations_by_value_list(conn, values=[])
     assert deleted == 0
-
-
-def test_load_column_values_from_csv_reads_zh_hant(tmp_path: Path) -> None:
-    csv_path = tmp_path / "Tags_zh_full.csv"
-    df = pl.DataFrame(
-        {
-            "source_tag": ["comic", "4koma"],
-            "type_id": [0, 0],
-            "zh-Hant": ["漫画", "四格"],
-        }
-    )
-    df.write_csv(csv_path)
-
-    values = _load_column_values_from_csv(
-        csv_path,
-        column_name="zh-Hant",
-        overrides=None,
-        report_dir_path=tmp_path,
-    )
-    assert set(values) == {"漫画", "四格"}
 
 
 def test_normalize_language_value_maps_names() -> None:

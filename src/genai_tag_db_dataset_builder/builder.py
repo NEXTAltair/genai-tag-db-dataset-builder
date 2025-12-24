@@ -305,6 +305,57 @@ def _should_include_source(
     )
 
 
+def _infer_source_timestamp_utc_midnight(path: Path) -> str | None:
+    """ファイル名から日付を推定し、UTCの 00:00:00 に固定したタイムスタンプ文字列を返す.
+
+    対応例:
+      - danbooru_241016.csv -> 2024-10-16 00:00:00+00:00
+      - danbooru_20241016.csv -> 2024-10-16 00:00:00+00:00
+    """
+    name = path.name.lower()
+    m8 = re.search(r"_(\d{8})(?:\D|$)", name)
+    if m8:
+        ymd = m8.group(1)
+        yyyy, mm, dd = int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8])
+        return f"{yyyy:04d}-{mm:02d}-{dd:02d} 00:00:00+00:00"
+
+    m6 = re.search(r"_(\d{6})(?:\D|$)", name)
+    if m6:
+        ymd = m6.group(1)
+        yy, mm, dd = int(ymd[:2]), int(ymd[2:4]), int(ymd[4:6])
+        yyyy = 2000 + yy
+        return f"{yyyy:04d}-{mm:02d}-{dd:02d} 00:00:00+00:00"
+
+    return None
+
+
+def _is_authoritative_count_source(path: Path) -> bool:
+    """最新スナップショットとして count を上書きするソースかどうか."""
+    name = path.name.lower()
+    return bool(re.search(r"^danbooru_\d{6,8}\.csv$", name))
+
+
+def _replace_usage_counts_for_format(
+    conn: sqlite3.Connection,
+    *,
+    format_id: int,
+    counts_by_tag_id: dict[int, int],
+    timestamp: str,
+) -> None:
+    """TAG_USAGE_COUNTS の特定 format_id をスナップショットで置換する.
+
+    注意: これは TAGS/TAG_STATUS を削除しない。削除するのは TAG_USAGE_COUNTS の当該 format_id 行のみ。
+    """
+    conn.execute("DELETE FROM TAG_USAGE_COUNTS WHERE format_id = ?", (format_id,))
+    rows = [(tag_id, format_id, count, timestamp, timestamp) for tag_id, count in counts_by_tag_id.items()]
+    conn.executemany(
+        "INSERT INTO TAG_USAGE_COUNTS (tag_id, format_id, count, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+
+
 def _safe_int(value: object) -> int | None:
     if value is None:
         return None
@@ -1862,18 +1913,13 @@ def build_dataset(
                         df = df.with_columns(pl.lit(-1).cast(pl.Int64).alias("type_id"))
                     else:
                         df = df.with_columns(
-                            pl.col("type_id")
-                            .cast(pl.Int64, strict=False)
-                            .fill_null(-1)
-                            .alias("type_id")
+                            pl.col("type_id").cast(pl.Int64, strict=False).fill_null(-1).alias("type_id")
                         )
                     if "deprecated_tags" not in df.columns:
                         df = df.with_columns(pl.lit("").alias("deprecated_tags"))
                     else:
                         df = df.with_columns(
-                            pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias(
-                                "deprecated_tags"
-                            )
+                            pl.coalesce([pl.col("deprecated_tags"), pl.lit("")]).alias("deprecated_tags")
                         )
                     if "deprecated" not in df.columns:
                         df = df.with_columns(pl.lit(0).cast(pl.Int64).alias("deprecated"))
