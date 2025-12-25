@@ -24,7 +24,7 @@ def _create_site_tags_sqlite(db_path: Path) -> None:
         )
         conn.execute(
             "INSERT INTO tags (id, tag, num, type, alias, tag_jp) VALUES (?, ?, ?, ?, ?, ?)",
-            (1, "witch", 10, 0, None, "魔女,まじょ"),
+            (1, "witch", 10, 0, None, "魔女､まじょ"),
         )
         conn.execute(
             "INSERT INTO tags (id, tag, num, type, alias, tag_jp) VALUES (?, ?, ?, ?, ?, ?)",

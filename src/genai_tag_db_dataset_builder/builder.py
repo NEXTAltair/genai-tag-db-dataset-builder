@@ -83,7 +83,7 @@ def _clean_translation_part(text: str) -> str:
     return text.strip().strip(" \"'“”‘’「」")
 
 
-_TRANSLATION_SPLIT_RE = re.compile(r"[,，、]")
+_TRANSLATION_SPLIT_RE = re.compile(r"[,，、､﹐]")
 
 
 def _split_translation_text(text: str) -> list[str]:
@@ -734,7 +734,8 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
     """TAG_TRANSLATIONS のカンマ区切り翻訳を分割して再投入する."""
     rows = conn.execute(
         "SELECT translation_id, tag_id, language, translation, created_at, updated_at "
-        "FROM TAG_TRANSLATIONS WHERE translation LIKE '%,%' OR translation LIKE '%，%' OR translation LIKE '%、%'"
+        "FROM TAG_TRANSLATIONS WHERE translation LIKE '%,%' OR translation LIKE '%，%' "
+        "OR translation LIKE '%、%' OR translation LIKE '%､%' OR translation LIKE '%﹐%'"
     ).fetchall()
     if not rows:
         return 0
@@ -2086,52 +2087,51 @@ def build_dataset(
                         "note": "site_tags",
                     }
                 )
-
-            # ja/zh/ko の翻訳は、それぞれの必須文字種を含まない場合（絵文字/顔文字/記号/全角記号など）は誤りとして削除する。
-            #
-            # NOTE:
-            # - romaji の作品名など（ASCIIのみ）はデータに含まれない前提（ユーザー判断）
-            # - 絵文字は翻訳として不要なため削除対象（ユーザー判断）
-            # - 全角コロン等の混入も翻訳としては不要なため削除対象
-            total_deleted = 0
-            for lang in ("ja", "zh", "ko"):
-                changes_before = conn.total_changes
-                deleted = _delete_translations_missing_required_script(conn, language=lang)
-                if deleted <= 0:
-                    continue
-                total_deleted += deleted
-                source_effects.append(
-                    {
-                        "source": "TAG_TRANSLATIONS",
-                        "action": "cleanup_deleted",
-                        "rows_read": 0,
-                        "db_changes": int(conn.total_changes - changes_before),
-                        "note": f"cleanup_missing_required_script:{lang}",
-                    }
-                )
-                logger.warning(
-                    f"[Cleanup] Deleted {deleted} translations lacking required script for {lang}"
-                )
-            if total_deleted:
-                logger.warning(
-                    f"[Cleanup] Total deleted translations (required script filter): {total_deleted}"
-                )
-
+        # ja/zh/ko の翻訳は、それぞれの必須文字種を含まない場合（絵文字/顔文字/記号/全角記号など）は誤りとして削除する。
+        #
+        # NOTE:
+        # - romaji の作品名など（ASCIIのみ）はデータに含まれない前提（ユーザー判断）
+        # - 絵文字は翻訳として不要なため削除対象（ユーザー判断）
+        # - 全角コロン等の混入も翻訳としては不要なため削除対象
+        total_deleted = 0
+        for lang in ("ja", "zh", "ko"):
             changes_before = conn.total_changes
-            split_deleted = _split_comma_delimited_translations(conn)
-            if split_deleted > 0:
-                source_effects.append(
-                    {
-                        "source": "TAG_TRANSLATIONS",
-                        "action": "cleanup_split",
-                        "rows_read": 0,
-                        "db_changes": int(conn.total_changes - changes_before),
-                        "note": "split_comma_delimited_translations",
-                    }
-                )
-                logger.warning(
-                    f"[Cleanup] Split {split_deleted} comma-delimited translations in TAG_TRANSLATIONS"
-                )
+            deleted = _delete_translations_missing_required_script(conn, language=lang)
+            if deleted <= 0:
+                continue
+            total_deleted += deleted
+            source_effects.append(
+                {
+                    "source": "TAG_TRANSLATIONS",
+                    "action": "cleanup_deleted",
+                    "rows_read": 0,
+                    "db_changes": int(conn.total_changes - changes_before),
+                    "note": f"cleanup_missing_required_script:{lang}",
+                }
+            )
+            logger.warning(
+                f"[Cleanup] Deleted {deleted} translations lacking required script for {lang}"
+            )
+        if total_deleted:
+            logger.warning(
+                f"[Cleanup] Total deleted translations (required script filter): {total_deleted}"
+            )
+
+        changes_before = conn.total_changes
+        split_deleted = _split_comma_delimited_translations(conn)
+        if split_deleted > 0:
+            source_effects.append(
+                {
+                    "source": "TAG_TRANSLATIONS",
+                    "action": "cleanup_split",
+                    "rows_read": 0,
+                    "db_changes": int(conn.total_changes - changes_before),
+                    "note": "split_comma_delimited_translations",
+                }
+            )
+            logger.warning(
+                f"[Cleanup] Split {split_deleted} comma-delimited translations in TAG_TRANSLATIONS"
+            )
 
         # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
         _repair_missing_type_format_mapping(conn, report_dir=report_dir_path if report_dir_path else None)

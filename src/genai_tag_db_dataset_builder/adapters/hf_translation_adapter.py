@@ -45,7 +45,7 @@ def _pick_column(cols: list[str], candidates: list[str]) -> str | None:
     return None
 
 
-_TRANSLATION_SPLIT_RE = re.compile(r"[,，、]")
+_TRANSLATION_SPLIT_RE = re.compile(r"[,，、､﹐]")
 
 
 def _explode_translations(value: Any) -> list[str]:
