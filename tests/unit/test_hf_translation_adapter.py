@@ -12,7 +12,7 @@ def test_p1atdev_adapter_reads_local_saved_dataset(tmp_path: Path) -> None:
     ds = Dataset.from_dict(
         {
             "tag": ["1girl", "witch"],
-            "japanese": ["一人の女の子", "魔女,ウィッチ"],
+            "japanese": ["一人の女の子", "魔女､ウィッチ"],
         }
     )
     save_dir = tmp_path / "hf_ds"

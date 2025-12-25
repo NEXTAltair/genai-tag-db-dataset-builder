@@ -6,6 +6,7 @@ import argparse
 import csv
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -226,6 +227,23 @@ def _coerce_int(value: str | None) -> int | None:
         return None
 
 
+def _current_builder_version(repo_root: Path) -> str:
+    env_sha = os.environ.get("GITHUB_SHA")
+    if env_sha:
+        return env_sha
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
 def _health_to_manifest(summary: dict) -> tuple[dict | None, dict | None]:
     if not summary:
         return None, None
@@ -265,6 +283,7 @@ def _build_target(
 ) -> Path:
     logger.info(f"=== Build start: {target.name} ===")
 
+    builder_version = _current_builder_version(_repo_root())
     source_meta = _fetch_sources(sources, external_sources_dir, force=force)
     staged_paths = _stage_translation_csvs(sources, external_sources_dir, sources_dir)
     include_path = _generate_include_filter(
@@ -280,6 +299,15 @@ def _build_target(
         comparison = {"changed": [{"id": "manifest_missing"}], "added": [], "removed": [], "unchanged": []}
     else:
         comparison = compare_source_revisions(manifest_existing, source_meta)
+        existing_builder = manifest_existing.get("build_info", {}).get("builder_version")
+        if existing_builder and existing_builder != builder_version:
+            comparison["changed"].append(
+                {
+                    "id": "builder_version",
+                    "old_revision": existing_builder,
+                    "new_revision": builder_version,
+                }
+            )
         if base_db_info.get("revision") and manifest_existing.get("build_info", {}).get("base_db", {}).get(
             "revision"
         ) != base_db_info.get("revision"):
@@ -315,6 +343,7 @@ def _build_target(
         sources_metadata=source_meta,
         statistics=stats,
         health_checks=health,
+        builder_version=builder_version,
     )
     write_build_manifest(manifest, target.manifest_path)
 
