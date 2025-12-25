@@ -753,7 +753,6 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
     if not deleted_ids:
         return 0
 
-    changes_before = conn.total_changes
     for chunk in _chunked(deleted_ids, 900):
         marks = ",".join(["?"] * len(chunk))
         conn.execute(
@@ -767,7 +766,7 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
             (tag_id, language, translation, created_at, updated_at),
         )
     conn.commit()
-    return int(conn.total_changes - changes_before)
+    return len(deleted_ids)
 
 
 def _write_conflicts_tsv(path: Path, conflicts: list[_ConflictRow]) -> None:
