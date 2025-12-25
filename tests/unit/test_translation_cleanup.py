@@ -141,3 +141,26 @@ def test_split_comma_delimited_translations_removes_empty_entries() -> None:
     assert (1, "ja", "アークナイツ") in remaining
     assert (1, "ja", "アークナイツバトルイラコン") in remaining
     assert not any(r[2].startswith(",") for r in remaining)
+
+
+def test_split_comma_delimited_translations_replaces_single_part() -> None:
+    conn = _create_translations_db_with_timestamps()
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (1, "ja", ",崩壊", "2024-01-01", "2024-01-02"),
+            (2, "ja", "つくよみちゃん,", "2024-01-01", "2024-01-02"),
+        ],
+    )
+    conn.commit()
+
+    deleted = _split_comma_delimited_translations(conn)
+    assert deleted == 2
+
+    remaining = conn.execute(
+        "SELECT tag_id, language, translation FROM TAG_TRANSLATIONS ORDER BY translation_id"
+    ).fetchall()
+    assert (1, "ja", "崩壊") in remaining
+    assert (2, "ja", "つくよみちゃん") in remaining
+    assert not any(r[2].startswith(",") or r[2].endswith(",") for r in remaining)
