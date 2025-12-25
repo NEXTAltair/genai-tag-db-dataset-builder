@@ -1662,10 +1662,8 @@ def _export_danbooru_view_parquet(
             return (
                 pl.col(col)
                 .fill_null("")
-                .str.split(sep)
-                .list.eval(pl.element().filter(pl.element() != ""))
-                .list.eval(pl.element().str.split(","))
-                .list.flatten()
+                .str.replace_all(sep, ",")
+                .str.split(",")
                 .list.eval(pl.element().str.strip_chars())
                 .list.eval(pl.element().filter(pl.element() != ""))
                 .alias(col.replace("_str", ""))
