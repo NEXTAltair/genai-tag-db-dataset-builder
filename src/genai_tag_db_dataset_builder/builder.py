@@ -83,6 +83,15 @@ def _clean_translation_part(text: str) -> str:
     return text.strip().strip(" \"'“”‘’「」")
 
 
+_TRANSLATION_SPLIT_RE = re.compile(r"[,，、]")
+
+
+def _split_translation_text(text: str) -> list[str]:
+    parts = [p.strip() for p in _TRANSLATION_SPLIT_RE.split(text)]
+    cleaned = [_clean_translation_part(p) for p in parts]
+    return [p for p in cleaned if p]
+
+
 def _extract_translations(
     df: pl.DataFrame,
     tags_mapping: dict[str, int],
@@ -97,21 +106,6 @@ def _extract_translations(
         (tag_id, language, translation)のtupleリスト
     """
     results: list[tuple[int, str, str]] = []
-
-    def _split_translation_values(value: object) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            out: list[str] = []
-            for v in value:
-                out.extend(_split_translation_values(v))
-            return out
-        text = str(value).strip()
-        if not text:
-            return []
-        parts = [p.strip() for p in text.split(",")]
-        cleaned = [_clean_translation_part(p) for p in parts]
-        return [p for p in cleaned if p]
 
     # tag列から正規化タグ名を取得
     if "tag" not in df.columns and "source_tag" in df.columns:
@@ -221,9 +215,7 @@ def _split_translation_values(value: object) -> list[str]:
     text = str(value).strip()
     if not text:
         return []
-    parts = [p.strip() for p in text.split(",")]
-    cleaned = [_clean_translation_part(p) for p in parts]
-    return [p for p in cleaned if p]
+    return _split_translation_text(text)
 
 
 def _normalize_language_value(value: str) -> str:
@@ -742,7 +734,7 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
     """TAG_TRANSLATIONS のカンマ区切り翻訳を分割して再投入する."""
     rows = conn.execute(
         "SELECT translation_id, tag_id, language, translation, created_at, updated_at "
-        "FROM TAG_TRANSLATIONS WHERE translation LIKE '%,%'"
+        "FROM TAG_TRANSLATIONS WHERE translation LIKE '%,%' OR translation LIKE '%，%' OR translation LIKE '%、%'"
     ).fetchall()
     if not rows:
         return 0
