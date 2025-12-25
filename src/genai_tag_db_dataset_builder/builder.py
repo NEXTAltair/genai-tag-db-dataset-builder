@@ -2109,9 +2109,7 @@ def build_dataset(
                     "note": f"cleanup_missing_required_script:{lang}",
                 }
             )
-            logger.warning(
-                f"[Cleanup] Deleted {deleted} translations lacking required script for {lang}"
-            )
+            logger.warning(f"[Cleanup] Deleted {deleted} translations lacking required script for {lang}")
         if total_deleted:
             logger.warning(
                 f"[Cleanup] Total deleted translations (required script filter): {total_deleted}"

@@ -224,7 +224,7 @@ def _coerce_int(value: str | None) -> int | None:
     try:
         return int(value)
     except ValueError:
-    return None
+        return None
 
 
 def _current_builder_version(repo_root: Path) -> str:
