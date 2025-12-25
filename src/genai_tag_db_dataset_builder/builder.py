@@ -744,7 +744,10 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
     inserts: list[tuple[int, str, str, str | None, str | None]] = []
     for translation_id, tag_id, language, translation, created_at, updated_at in rows:
         parts = _split_translation_values(translation)
-        if len(parts) <= 1:
+        if not parts:
+            deleted_ids.append(int(translation_id))
+            continue
+        if len(parts) == 1 and parts[0] == str(translation).strip():
             continue
         deleted_ids.append(int(translation_id))
         for part in parts:
