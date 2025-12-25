@@ -79,6 +79,10 @@ def _extract_all_tags_from_deprecated(df: pl.DataFrame) -> set[str]:
     return set(tags)
 
 
+def _clean_translation_part(text: str) -> str:
+    return text.strip().strip(" \"'“”‘’「」")
+
+
 def _extract_translations(
     df: pl.DataFrame,
     tags_mapping: dict[str, int],
@@ -106,7 +110,8 @@ def _extract_translations(
         if not text:
             return []
         parts = [p.strip() for p in text.split(",")]
-        return [p for p in parts if p]
+        cleaned = [_clean_translation_part(p) for p in parts]
+        return [p for p in cleaned if p]
 
     # tag列から正規化タグ名を取得
     if "tag" not in df.columns and "source_tag" in df.columns:
@@ -217,7 +222,8 @@ def _split_translation_values(value: object) -> list[str]:
     if not text:
         return []
     parts = [p.strip() for p in text.split(",")]
-    return [p for p in parts if p]
+    cleaned = [_clean_translation_part(p) for p in parts]
+    return [p for p in cleaned if p]
 
 
 def _normalize_language_value(value: str) -> str:
@@ -1656,7 +1662,9 @@ def _export_danbooru_view_parquet(
             return (
                 pl.col(col)
                 .fill_null("")
-                .str.split(sep)
+                .str.replace_all(sep, ",")
+                .str.split(",")
+                .list.eval(pl.element().str.strip_chars())
                 .list.eval(pl.element().filter(pl.element() != ""))
                 .alias(col.replace("_str", ""))
             )
