@@ -57,7 +57,8 @@ def _explode_translations(value: Any) -> list[str]:
         return []
     # 既存CSVと同様に、カンマ区切りの揺れは複数翻訳として取り込む（重複は許容）
     parts = [p.strip() for p in s.split(",")]
-    return [p for p in parts if p]
+    cleaned = [p.strip(" \"'“”‘’「」") for p in parts]
+    return [p for p in cleaned if p]
 
 
 @dataclass(frozen=True)
