@@ -67,10 +67,10 @@ uv run mypy src/genai_tag_db_dataset_builder
 
 - Schedule: Monday 03:00 JST (Sunday 18:00 UTC)
 - Target on schedule: `all` (CC0, MIT, and CC4)
-- Publish destination:
-  - `NEXTAltair/genai-image-tag-db`
-  - `NEXTAltair/genai-image-tag-db-mit`
-  - `NEXTAltair/genai-image-tag-db-CC4`
+- Publish destination (Hugging Face Datasets):
+  - [NEXTAltair/genai-image-tag-db](https://huggingface.co/datasets/NEXTAltair/genai-image-tag-db)
+  - [NEXTAltair/genai-image-tag-db-mit](https://huggingface.co/datasets/NEXTAltair/genai-image-tag-db-mit)
+  - [NEXTAltair/genai-image-tag-db-CC4](https://huggingface.co/datasets/NEXTAltair/genai-image-tag-db-CC4)
 - Required secret: `HF_TOKEN`
 
 Manual runs can still choose a narrower target (`cc0`, `mit`, `cc4`, or `all`) and `force`.
