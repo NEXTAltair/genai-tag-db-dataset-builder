@@ -61,6 +61,20 @@ uv run ruff check .
 uv run mypy src/genai_tag_db_dataset_builder
 ```
 
+## Scheduled Dataset Refresh / 定期データセット更新
+
+`.github/workflows/update-tag-dataset-ci.yml` rebuilds and publishes the tag databases weekly:
+
+- Schedule: Monday 03:00 JST (Sunday 18:00 UTC)
+- Target on schedule: `all` (CC0, MIT, and CC4)
+- Publish destination:
+  - `NEXTAltair/genai-image-tag-db`
+  - `NEXTAltair/genai-image-tag-db-mit`
+  - `NEXTAltair/genai-image-tag-db-CC4`
+- Required secret: `HF_TOKEN`
+
+Manual runs can still choose a narrower target (`cc0`, `mit`, `cc4`, or `all`) and `force`.
+
 ## Layout / 構成
 
 ```
