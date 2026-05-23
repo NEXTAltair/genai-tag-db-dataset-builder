@@ -1,6 +1,8 @@
 name: Update Tag Dataset (CI)
 
 on:
+  schedule:
+    - cron: "0 18 * * 0" # Weekly: Monday 03:00 JST / Sunday 18:00 UTC
   workflow_dispatch:
     inputs:
       target:
@@ -19,10 +21,16 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: update-tag-dataset-ci
+  cancel-in-progress: false
+
 env:
   HF_REPO_CC0: NEXTAltair/genai-image-tag-db
   HF_REPO_MIT: NEXTAltair/genai-image-tag-db-mit
   HF_REPO_CC4: NEXTAltair/genai-image-tag-db-CC4
+  BUILD_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
+  FORCE_REBUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
 
 jobs:
   build:
@@ -73,11 +81,11 @@ jobs:
         run: |
           VERSION="v$(date -u +%Y.%m.%d).${{ github.run_number }}"
           FORCE_FLAG=""
-          if [ "${{ inputs.force }}" = "true" ]; then
+          if [ "${FORCE_REBUILD}" = "true" ]; then
             FORCE_FLAG="--force"
           fi
           uv run python -m builder_ci.main \
-            --target "${{ inputs.target }}" \
+            --target "${BUILD_TARGET}" \
             --sources-yml builder_ci/sources.yml \
             --sources-dir . \
             --output-root ci_output \
