@@ -1077,12 +1077,25 @@ def _write_placeholder_repairs_tsv(report_dir: Path, repairs: list[dict[str, obj
     logger.warning(f"Placeholder tag_id repairs report: {out_path} ({len(repairs)} rows)")
 
 
+# e621 のカテゴリ名前空間 (core/master_data.py の TAG_TYPE_NAME と一致)。
+# danbooru 等 非e621 format で preferred がこれら prefix 側へ逆転している行を是正する。
+_CATEGORY_PREFIXES: tuple[str, ...] = (
+    "general:",
+    "artist:",
+    "copyright:",
+    "character:",
+    "species:",
+    "invalid:",
+    "meta:",
+    "lore:",
+)
+
+
 def _strip_category_prefix(tag: str) -> str | None:
-    """カテゴリprefix（meta:/artist:）を除去してベースタグ名を返す。"""
-    if tag.startswith("meta:"):
-        return tag[len("meta:") :].strip()
-    if tag.startswith("artist:"):
-        return tag[len("artist:") :].strip()
+    """カテゴリprefix（e621 の general:/artist:/copyright: 等）を除去してベースタグ名を返す。"""
+    for prefix in _CATEGORY_PREFIXES:
+        if tag.startswith(prefix):
+            return tag[len(prefix) :].strip()
     return None
 
 
@@ -1100,9 +1113,12 @@ def _repair_non_e621_prefix_preferred(conn: sqlite3.Connection) -> list[dict[str
     """
     repairs: list[dict[str, object]] = []
 
-    # 候補: 非e621で、tag または preferred_tag に prefix が含まれる行
+    # 候補: 非e621で、tag または preferred_tag に カテゴリ prefix が含まれる行。
+    # prefix は固定の定数集合 (_CATEGORY_PREFIXES) なのでパラメータ束縛で組み立てる。
+    prefix_conditions = [f"{col}.tag LIKE ?" for col in ("t", "tp") for _ in _CATEGORY_PREFIXES]
+    prefix_params = [f"{prefix}%" for _ in ("t", "tp") for prefix in _CATEGORY_PREFIXES]
     rows = conn.execute(
-        """
+        f"""
         SELECT
             ts.tag_id,
             ts.format_id,
@@ -1116,11 +1132,9 @@ def _repair_non_e621_prefix_preferred(conn: sqlite3.Connection) -> list[dict[str
         JOIN TAGS tp ON tp.tag_id = ts.preferred_tag_id
         WHERE
             ts.format_id != 2
-            AND (
-                t.tag LIKE 'meta:%' OR t.tag LIKE 'artist:%'
-                OR tp.tag LIKE 'meta:%' OR tp.tag LIKE 'artist:%'
-            )
-        """
+            AND ({" OR ".join(prefix_conditions)})
+        """,
+        prefix_params,
     ).fetchall()
 
     for tag_id, format_id, _type_id, alias, preferred_tag_id, tag, preferred_tag in rows:
@@ -1177,7 +1191,51 @@ def _repair_non_e621_prefix_preferred(conn: sqlite3.Connection) -> list[dict[str
             }
         )
 
+    conn.commit()
     return repairs
+
+
+def _rename_orphan_prefixed_tags(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """clean 等価が存在しない カテゴリ prefix タグ (例: copyright:foo) を prefix 除去で改名する。
+
+    `_repair_non_e621_prefix_preferred` で prefix 無しタグへ寄せきれなかった
+    (base_tag_not_found) 残りを正規化する。同名の clean タグが既に存在する場合は
+    alias 解決側に委ね、ここでは改名しない (重複を作らない)。
+
+    Returns:
+        改名内容のレポート行（TSV出力用）
+    """
+    renames: list[dict[str, object]] = []
+
+    prefix_conditions = ["t.tag LIKE ?" for _ in _CATEGORY_PREFIXES]
+    prefix_params = [f"{prefix}%" for prefix in _CATEGORY_PREFIXES]
+    rows = conn.execute(
+        f"SELECT t.tag_id, t.tag FROM TAGS t WHERE {' OR '.join(prefix_conditions)}",
+        prefix_params,
+    ).fetchall()
+
+    for tag_id, tag in rows:
+        base = _strip_category_prefix(tag)
+        if not base:
+            continue
+        existing = conn.execute(
+            "SELECT 1 FROM TAGS WHERE tag = ? AND tag_id != ? LIMIT 1", (base, tag_id)
+        ).fetchone()
+        if existing is not None:
+            # clean 等価が別 tag_id に存在 → alias 解決へ委ね、改名しない
+            continue
+        conn.execute("UPDATE TAGS SET tag = ? WHERE tag_id = ?", (base, tag_id))
+        renames.append(
+            {
+                "tag_id": int(tag_id),
+                "old_tag": tag,
+                "new_tag": base,
+                "reason": "rename_prefix_to_base",
+            }
+        )
+
+    conn.commit()
+    return renames
 
 
 def _write_non_e621_prefix_repairs_tsv(report_dir: Path, repairs: list[dict[str, object]]) -> None:
@@ -1214,6 +1272,18 @@ def _write_non_e621_prefix_repairs_tsv(report_dir: Path, repairs: list[dict[str,
                 ]
             )
     logger.warning(f"Non-e621 prefix preferred repairs report: {out_path} ({len(repairs)} rows)")
+
+
+def _write_prefix_tag_renames_tsv(report_dir: Path, renames: list[dict[str, object]]) -> None:
+    if not renames:
+        return
+    out_path = report_dir / "prefix_tag_renames.tsv"
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["tag_id", "old_tag", "new_tag", "reason"])
+        for r in renames:
+            writer.writerow([r["tag_id"], r["old_tag"], r["new_tag"], r["reason"]])
+    logger.warning(f"Prefix tag renames report: {out_path} ({len(renames)} rows)")
 
 
 def _write_tag_status_conflicts_tsv(
@@ -2135,6 +2205,15 @@ def build_dataset(
 
         # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
         _repair_missing_type_format_mapping(conn, report_dir=report_dir_path if report_dir_path else None)
+
+        # Phase 2.6: 非e621 の カテゴリ prefix 逆転是正 + orphan prefix タグの改名。
+        # 非e621 format で preferred が copyright:/artist: 等 prefix 側になっている逆転を
+        # prefix 無しの canonical へ寄せ、clean 等価が無い prefix タグは prefix 除去で改名する。
+        prefix_repairs = _repair_non_e621_prefix_preferred(conn)
+        prefix_renames = _rename_orphan_prefixed_tags(conn)
+        if report_dir_path:
+            _write_non_e621_prefix_repairs_tsv(report_dir_path, prefix_repairs)
+            _write_prefix_tag_renames_tsv(report_dir_path, prefix_renames)
 
         # Phase 3: インデックス作成
         logger.info("[Phase 3] Creating indexes")
