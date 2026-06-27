@@ -1,4 +1,5 @@
 import sqlite3
+
 from genai_tag_db_dataset_builder.builder import (
     _delete_ja_translations_by_value_list,
     _delete_translations_ascii_only_for_languages,
@@ -106,9 +107,9 @@ def test_delete_translations_missing_required_script_ja() -> None:
         "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
         [
             (1, "ja", "猫耳"),
-            (2, "ja", "！！"),
+            (2, "ja", "\uff01\uff01"),
             (3, "ja", "abc"),
-            (4, "ja", "Digimon Universe：Appli Monsters"),
+            (4, "ja", "Digimon Universe\uff1aAppli Monsters"),
             (5, "ja", "ねこみみ"),
         ],
     )

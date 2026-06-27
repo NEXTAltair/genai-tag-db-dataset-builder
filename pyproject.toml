@@ -95,9 +95,9 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
 [tool.ruff]
-target-version = "py312"
-line-length = 108
 fix = true
+line-length = 108
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -105,21 +105,27 @@ select = [
     "W",   # pycodestyle warnings
     "F",   # pyflakes
     "I",   # isort
+    "C",   # flake8-comprehensions
     "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
     "UP",  # pyupgrade
-    "ARG", # flake8-unused-arguments
-    "SIM", # flake8-simplify
+    "RUF" # Ruff-specific rules
+]
+exclude = [
+    "*/gui/designer/*",
+    "*/__pycache__"
 ]
 ignore = [
-    "E501",  # line too long (handled by formatter)
-    "B008",  # do not perform function calls in argument defaults
+    "E501",   # Line too long (controlled by line-length)
+    "C901",   # Function is too complex
 ]
 
-[tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]  # unused imports
-"tests/**/*.py" = ["ARG"]  # unused arguments in tests
+# Allow characters used by tag-db-tools UI/text conventions.
+allowed-confusables = ["ノ", "（", "）", "×"]
+
+fixable = ["ALL"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

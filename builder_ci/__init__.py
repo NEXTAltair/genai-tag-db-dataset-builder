@@ -20,15 +20,13 @@ from builder_ci.manifest import (
 __version__ = "0.1.0"
 
 __all__ = [
-    # fetcher
-    "load_sources_config",
+    "compare_source_revisions",
+    "create_build_manifest",
+    "fetch_all_sources",
     "fetch_github_repo",
     "fetch_hf_dataset",
-    "fetch_all_sources",
-    # manifest
-    "create_build_manifest",
-    "write_build_manifest",
     "load_build_manifest",
-    "compare_source_revisions",
+    "load_sources_config",
     "should_rebuild",
+    "write_build_manifest",
 ]

@@ -80,10 +80,10 @@ def _extract_all_tags_from_deprecated(df: pl.DataFrame) -> set[str]:
 
 
 def _clean_translation_part(text: str) -> str:
-    return text.strip().strip(" \"'“”‘’「」")
+    return text.strip().strip(" \"'\u201c\u201d\u2018\u2019\u300c\u300d")
 
 
-_TRANSLATION_SPLIT_RE = re.compile(r"[,，、､﹐]")
+_TRANSLATION_SPLIT_RE = re.compile("[,\uff0c\u3001\uff64\ufe50]")
 
 
 def _split_translation_text(text: str) -> list[str]:
@@ -734,8 +734,9 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
     """TAG_TRANSLATIONS のカンマ区切り翻訳を分割して再投入する."""
     rows = conn.execute(
         "SELECT translation_id, tag_id, language, translation, created_at, updated_at "
-        "FROM TAG_TRANSLATIONS WHERE translation LIKE '%,%' OR translation LIKE '%，%' "
-        "OR translation LIKE '%、%' OR translation LIKE '%､%' OR translation LIKE '%﹐%'"
+        "FROM TAG_TRANSLATIONS WHERE translation LIKE ? OR translation LIKE ? "
+        "OR translation LIKE ? OR translation LIKE ? OR translation LIKE ?",
+        ("%,%", "%\uff0c%", "%\u3001%", "%\uff64%", "%\ufe50%"),
     ).fetchall()
     if not rows:
         return 0
@@ -1917,7 +1918,7 @@ def build_dataset(
                     {
                         "source": source_name,
                         "action": "imported",
-                        "rows_read": int(len(trans_rows)),
+                        "rows_read": len(trans_rows),
                         "db_changes": int(conn.total_changes - changes_before),
                         "note": "hf_ja_translation",
                     }

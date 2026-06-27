@@ -17,6 +17,7 @@ import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import polars as pl
 from loguru import logger
@@ -34,10 +35,10 @@ class SiteTagsAdapter(BaseAdapter):
     """deepghs/site_tags の tags.sqlite を読むアダプタ."""
 
     # e621 は tag_aliases に invalid_tag という吸い込み先が存在する（tags テーブルには無い）
-    _INVALID_SINKS = {"invalid_tag", "bad_tag"}
+    _INVALID_SINKS: ClassVar[set[str]] = {"invalid_tag", "bad_tag"}
 
     # gelbooru type（文字列）→ type_id（TAG_TYPE_FORMAT_MAPPING の type_id）
-    _GELBOORU_TYPE_TO_ID = {
+    _GELBOORU_TYPE_TO_ID: ClassVar[dict[str, int]] = {
         "general": 0,
         "artist": 1,
         "copyright": 3,

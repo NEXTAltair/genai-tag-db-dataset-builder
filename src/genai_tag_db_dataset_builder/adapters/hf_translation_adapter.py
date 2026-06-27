@@ -11,9 +11,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any
 
 import polars as pl
@@ -45,7 +45,7 @@ def _pick_column(cols: list[str], candidates: list[str]) -> str | None:
     return None
 
 
-_TRANSLATION_SPLIT_RE = re.compile(r"[,，、､﹐]")
+_TRANSLATION_SPLIT_RE = re.compile("[,\uff0c\u3001\uff64\ufe50]")
 
 
 def _explode_translations(value: Any) -> list[str]:
@@ -61,7 +61,7 @@ def _explode_translations(value: Any) -> list[str]:
         return []
     # 既存CSVと同様に、カンマ区切りの揺れは複数翻訳として取り込む（重複は許容）
     parts = [p.strip() for p in _TRANSLATION_SPLIT_RE.split(s)]
-    cleaned = [p.strip(" \"'“”‘’「」") for p in parts]
+    cleaned = [p.strip(" \"'\u201c\u201d\u2018\u2019\u300c\u300d") for p in parts]
     return [p for p in cleaned if p]
 
 
