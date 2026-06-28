@@ -21,6 +21,11 @@ import polars as pl
 
 from genai_tag_db_dataset_builder.adapters.hf_translation_adapter import P1atdevDanbooruJaTagPairAdapter
 from genai_tag_db_dataset_builder.adapters.site_tags_adapter import SiteTagsAdapter
+from genai_tag_db_dataset_builder.core.alias_resolution import (
+    AliasConflict,
+    AliasResolution,
+    write_alias_conflicts_tsv,
+)
 from genai_tag_db_dataset_builder.core.database import (
     apply_connection_pragmas,
     build_indexes,
@@ -1763,6 +1768,7 @@ def build_dataset(
     parquet_output_dir: Path | str | None = None,
     base_db_path: Path | str | None = None,
     overwrite: bool = False,
+    alias_resolution: AliasResolution | None = None,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
 
@@ -1775,6 +1781,7 @@ def build_dataset(
         parquet_output_dir: Parquet出力先ディレクトリ（Noneの場合はParquet出力なし）
         base_db_path: ベースとなる既存SQLiteファイル（MIT版ビルド等で使用）。指定時はPhase 0/1をスキップ
         overwrite: 既存のoutput_pathを上書きするか
+        alias_resolution: site_tags の alias conflict を手動解決する override（None なら first-win のみ）
 
     Raises:
         FileExistsError: output_pathが既に存在し、overwrite=False の場合
@@ -1817,6 +1824,9 @@ def build_dataset(
     source_effects: list[dict[str, object]] = []
 
     placeholder_repairs: list[dict[str, object]] = []
+
+    # site_tags の alias conflict（first-win / override）をレポート用に蓄積する。
+    alias_conflicts: list[AliasConflict] = []
 
     # base_db_path が指定されている場合は、Phase 0/1 をスキップして既存DBをコピー
     skip_phase_0_1 = base_db_path is not None
@@ -1973,7 +1983,12 @@ def build_dataset(
                 rows_read_total = 0
                 translation_rows_total = 0
 
-                site_tags_adapter = SiteTagsAdapter(sqlite_path, format_id=format_id)
+                site_tags_adapter = SiteTagsAdapter(
+                    sqlite_path,
+                    format_id=format_id,
+                    domain=sqlite_path.parent.name,
+                    alias_resolution=alias_resolution,
+                )
                 for site_chunk in site_tags_adapter.iter_chunks(chunk_size=50_000):
                     df = site_chunk.df
                     rows_read_total += int(df.height)
@@ -2148,6 +2163,9 @@ def build_dataset(
                             conn.commit()
                             translation_rows_total += len(trans_rows)
 
+                # alias conflict（first-win / override）をレポート用に集約する。
+                alias_conflicts.extend(site_tags_adapter.alias_conflicts)
+
                 logger.info(
                     f"Imported site_tags: {source_name} (rows={rows_read_total}, translations={translation_rows_total})"
                 )
@@ -2249,6 +2267,8 @@ def build_dataset(
 
         if report_dir_path:
             _write_placeholder_repairs_tsv(report_dir_path, placeholder_repairs)
+            # alias conflict レポート（conflict が無ければファイルは作らない）。
+            write_alias_conflicts_tsv(alias_conflicts, report_dir_path / "alias_conflicts.tsv")
 
     finally:
         conn.close()

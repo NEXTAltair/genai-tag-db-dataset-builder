@@ -3,6 +3,10 @@ name: Update Tag Dataset (CI)
 on:
   schedule:
     - cron: "0 18 * * 0" # Weekly: Monday 03:00 JST / Sunday 18:00 UTC
+  push:
+    branches: [main]
+    paths:
+      - overrides/alias_resolution.yml
   workflow_dispatch:
     inputs:
       target:

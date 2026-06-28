@@ -1,0 +1,26 @@
+# site_tags alias conflict の手動解決（override）
+#
+# deepghs/site_tags 由来の alias は、同じ alias が複数の canonical を指すことがある。
+# 既定では first-win（最初に見えた canonical を採用）で解決し、衝突は
+# report/alias_conflicts.tsv に記録される。
+#
+# ここに記述したものだけ first-win より優先して解決される。
+# report の resolution_reason 列が "override" になる。
+#
+# 形式:
+#   alias_resolution:
+#     <domain>:
+#       <alias>: <canonical>
+#
+# 例:
+#   alias_resolution:
+#     zerochan.net:
+#       アビゲイル: Abigail
+#
+# 注意:
+# - domain は site_tags のディレクトリ名（例: zerochan.net, danbooru.donmai.us）
+# - canonical は空文字不可（不正な値は warning でスキップ）
+# - このファイルの更新は manifest の override_hash 差分として検知され、
+#   参照元 revision が同じでもDBが再ビルドされる（update-tag-dataset-ci）
+
+alias_resolution: {}

@@ -19,8 +19,11 @@ from loguru import logger
 from builder_ci.fetcher import fetch_github_repo, fetch_hf_dataset, load_sources_config
 from builder_ci.manifest import (
     compare_source_revisions,
+    compute_override_hash,
     create_build_manifest,
+    get_manifest_override_hash,
     load_build_manifest,
+    restore_build_manifest_from_hf,
     should_rebuild,
     write_build_manifest,
 )
@@ -33,6 +36,10 @@ if src_dir.exists():
     sys.path.insert(0, str(src_dir))
 
 from genai_tag_db_dataset_builder.builder import build_dataset  # noqa: E402
+from genai_tag_db_dataset_builder.core.alias_resolution import (  # noqa: E402
+    AliasResolution,
+    load_alias_resolution,
+)
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate  # noqa: E402
 from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks  # noqa: E402
 
@@ -54,6 +61,10 @@ def _repo_root() -> Path:
 
 def _external_sources_dir(repo_root: Path) -> Path:
     return repo_root / "external_sources"
+
+
+def _alias_resolution_override_path(repo_root: Path) -> Path:
+    return repo_root / "overrides" / "alias_resolution.yml"
 
 
 def _select_sources_for_target(sources: list[dict], target: str) -> list[dict]:
@@ -280,6 +291,9 @@ def _build_target(
     force: bool,
     publish: bool,
     publish_repo_id: str | None,
+    hf_repo_id: str | None = None,
+    override_path: Path | None = None,
+    alias_resolution: AliasResolution | None = None,
 ) -> Path:
     logger.info(f"=== Build start: {target.name} ===")
 
@@ -293,6 +307,13 @@ def _build_target(
         extra_paths=staged_paths,
     )
     hf_ja_datasets = _hf_translation_datasets(sources)
+
+    override_hash = compute_override_hash(override_path)
+
+    # 既存 manifest がローカルに無い場合は HF から復元してから差分判定する。
+    # （手動 workflow でも毎回 manifest missing にならないようにするため）
+    if not target.manifest_path.exists() and hf_repo_id:
+        restore_build_manifest_from_hf(hf_repo_id, target.manifest_path)
 
     manifest_existing = load_build_manifest(target.manifest_path)
     if not manifest_existing:
@@ -312,6 +333,15 @@ def _build_target(
             "revision"
         ) != base_db_info.get("revision"):
             comparison["changed"].append({"id": "base_db"})
+        existing_override_hash = get_manifest_override_hash(manifest_existing)
+        if existing_override_hash != override_hash:
+            comparison["changed"].append(
+                {
+                    "id": "override",
+                    "old_revision": existing_override_hash,
+                    "new_revision": override_hash,
+                }
+            )
     if not should_rebuild(comparison, force=force):
         logger.info(f"No source changes for {target.name}, skipping build.")
         return target.output_db
@@ -330,6 +360,7 @@ def _build_target(
         parquet_output_dir=target.parquet_dir,
         base_db_path=base_db_path,
         overwrite=True,
+        alias_resolution=alias_resolution,
     )
 
     summary_path = run_health_checks(target.output_db, target.report_dir / "db_health")
@@ -344,6 +375,7 @@ def _build_target(
         statistics=stats,
         health_checks=health,
         builder_version=builder_version,
+        override_hash=override_hash,
     )
     write_build_manifest(manifest, target.manifest_path)
 
@@ -401,6 +433,9 @@ def orchestrate(
 
     sources = load_sources_config(sources_yml)
 
+    override_path = _alias_resolution_override_path(_repo_root())
+    alias_resolution = load_alias_resolution(override_path)
+
     def target_cfg(name: str) -> TargetConfig:
         out_dir = output_root / f"out_db_{name}"
         report_dir = out_dir / "report"
@@ -438,6 +473,9 @@ def orchestrate(
             force=force,
             publish=publish and target in ["cc0", "all"],
             publish_repo_id=repo_cc0,
+            hf_repo_id=repo_cc0,
+            override_path=override_path,
+            alias_resolution=alias_resolution,
         )
 
     def run_mit(cc0_db: Path) -> None:
@@ -454,6 +492,9 @@ def orchestrate(
             force=force,
             publish=publish and target in ["mit", "all"],
             publish_repo_id=repo_mit,
+            hf_repo_id=repo_mit,
+            override_path=override_path,
+            alias_resolution=alias_resolution,
         )
 
     def run_cc4(cc0_db: Path) -> None:
@@ -470,6 +511,9 @@ def orchestrate(
             force=force,
             publish=publish and target in ["cc4", "all"],
             publish_repo_id=repo_cc4,
+            hf_repo_id=repo_cc4,
+            override_path=override_path,
+            alias_resolution=alias_resolution,
         )
 
     if target == "cc0":
