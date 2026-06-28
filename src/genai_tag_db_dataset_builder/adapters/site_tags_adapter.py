@@ -22,6 +22,7 @@ from typing import ClassVar
 import polars as pl
 from loguru import logger
 
+from ..core.alias_resolution import AliasConflict, AliasResolution, resolve_canonical
 from .base_adapter import BaseAdapter
 
 
@@ -52,12 +53,25 @@ class SiteTagsAdapter(BaseAdapter):
         sqlite_path: Path | str,
         *,
         format_id: int,
+        domain: str | None = None,
+        alias_resolution: AliasResolution | None = None,
     ) -> None:
         self.sqlite_path = Path(sqlite_path)
         self.format_id = int(format_id)
+        # alias_resolution override / conflict レポートのためのサイトドメイン。
+        # 未指定時は sqlite の親ディレクトリ名（例: "zerochan.net"）を採用する。
+        self.domain = domain if domain is not None else self.sqlite_path.parent.name
+        self.alias_resolution = alias_resolution
+        # iter_chunks 実行時に検出した alias conflict を蓄積する。
+        self._alias_conflicts: list[AliasConflict] = []
 
         if not self.sqlite_path.exists():
             raise FileNotFoundError(f"site_tags sqlite not found: {self.sqlite_path}")
+
+    @property
+    def alias_conflicts(self) -> list[AliasConflict]:
+        """直近の読み出しで検出した alias conflict の一覧."""
+        return self._alias_conflicts
 
     def read(self) -> pl.DataFrame:
         """小規模ソース向け（全件読み込み）.
@@ -452,9 +466,8 @@ class SiteTagsAdapter(BaseAdapter):
             deprecated_by_target: preferred_source_tag -> list[alias_source_tag]
             invalid_aliases: invalid_tag/bad_tag への alias_source_tag の集合（redirectしない）
         """
-        alias_to_tag: dict[str, str] = {}
-        deprecated_by_target: dict[str, list[str]] = {}
-        invalid_aliases: set[str] = set()
+        # 読み出しのたびに conflict を作り直す（再実行で二重計上しない）。
+        self._alias_conflicts = []
 
         # 1) tag_aliases テーブルがある場合（danbooru/e621/moebooru/zerochan等）
         has_tag_aliases = conn.execute(
@@ -462,29 +475,7 @@ class SiteTagsAdapter(BaseAdapter):
         ).fetchone()
         if has_tag_aliases:
             rows = conn.execute("SELECT alias, tag FROM tag_aliases").fetchall()
-            for alias, tag in rows:
-                if alias is None or tag is None:
-                    continue
-                a = str(alias)
-                t = str(tag)
-
-                # 重複 alias は先勝ち + レポート（count が取れない場合の方針）
-                if a in alias_to_tag and alias_to_tag[a] != t:
-                    logger.warning(
-                        f"[site_tags] alias conflict (first-win): {a!r} -> {alias_to_tag[a]!r} / {t!r} "
-                        f"({self.sqlite_path})"
-                    )
-                    continue
-                alias_to_tag[a] = t
-
-                if t in self._INVALID_SINKS:
-                    invalid_aliases.add(a)
-                    continue
-                deprecated_by_target.setdefault(t, []).append(a)
-
-            for k in list(deprecated_by_target.keys()):
-                deprecated_by_target[k] = sorted(set(deprecated_by_target[k]))
-            return alias_to_tag, deprecated_by_target, invalid_aliases
+            return self._resolve_alias_pairs(rows, handle_invalid_sinks=True)
 
         # 2) tags.alias が「推奨先 id」を指す形式（anime-pictures）
         if (
@@ -500,22 +491,66 @@ class SiteTagsAdapter(BaseAdapter):
                 WHERE a.alias IS NOT NULL
                 """
             ).fetchall()
-            for alias, tag in rows:
-                if alias is None or tag is None:
-                    continue
-                a = str(alias)
-                t = str(tag)
-                if a in alias_to_tag and alias_to_tag[a] != t:
-                    logger.warning(
-                        f"[site_tags] alias conflict (first-win): {a!r} -> {alias_to_tag[a]!r} / {t!r} "
-                        f"({self.sqlite_path})"
-                    )
-                    continue
-                alias_to_tag[a] = t
-                deprecated_by_target.setdefault(t, []).append(a)
+            return self._resolve_alias_pairs(rows, handle_invalid_sinks=False)
 
-            for k in list(deprecated_by_target.keys()):
-                deprecated_by_target[k] = sorted(set(deprecated_by_target[k]))
-            return alias_to_tag, deprecated_by_target, invalid_aliases
+        return {}, {}, set()
+
+    def _resolve_alias_pairs(
+        self,
+        rows: list[tuple[object, object]],
+        *,
+        handle_invalid_sinks: bool,
+    ) -> tuple[dict[str, str], dict[str, list[str]], set[str]]:
+        """(alias, tag) ペア列から alias 解決結果を組み立てる.
+
+        同一 alias に複数 canonical が現れた場合は override 優先・無ければ first-win
+        で解決し、不採用候補を ``self._alias_conflicts`` に記録する（build は止めない）。
+
+        Args:
+            rows: ``(alias, tag)`` のタプル列（None は無視）
+            handle_invalid_sinks: ``invalid_tag``/``bad_tag`` への redirect を
+                deprecated 化せず invalid_aliases に振り分けるか
+
+        Returns:
+            ``(alias_to_tag, deprecated_by_target, invalid_aliases)``
+        """
+        # first-seen 順を保ちつつ canonical 候補を一意化する。
+        candidates: dict[str, list[str]] = {}
+        for alias, tag in rows:
+            if alias is None or tag is None:
+                continue
+            a = str(alias)
+            t = str(tag)
+            cands = candidates.setdefault(a, [])
+            if t not in cands:
+                cands.append(t)
+
+        alias_to_tag: dict[str, str] = {}
+        deprecated_by_target: dict[str, list[str]] = {}
+        invalid_aliases: set[str] = set()
+
+        for a, cands in candidates.items():
+            canonical, conflicts = resolve_canonical(
+                a,
+                cands,
+                domain=self.domain,
+                resolution=self.alias_resolution,
+            )
+            if conflicts:
+                self._alias_conflicts.extend(conflicts)
+                for c in conflicts:
+                    logger.warning(
+                        f"[site_tags] alias conflict ({c.resolution_reason}): {a!r} -> "
+                        f"{c.selected_canonical!r} / {c.rejected_canonical!r} ({self.sqlite_path})"
+                    )
+
+            alias_to_tag[a] = canonical
+            if handle_invalid_sinks and canonical in self._INVALID_SINKS:
+                invalid_aliases.add(a)
+                continue
+            deprecated_by_target.setdefault(canonical, []).append(a)
+
+        for k in list(deprecated_by_target.keys()):
+            deprecated_by_target[k] = sorted(set(deprecated_by_target[k]))
 
         return alias_to_tag, deprecated_by_target, invalid_aliases

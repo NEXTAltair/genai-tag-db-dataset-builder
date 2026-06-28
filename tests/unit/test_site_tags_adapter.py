@@ -6,6 +6,66 @@ from pathlib import Path
 import polars as pl
 
 from genai_tag_db_dataset_builder.adapters.site_tags_adapter import SiteTagsAdapter
+from genai_tag_db_dataset_builder.core.alias_resolution import AliasResolution
+
+
+def _make_conflicting_alias_db(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE tags (
+              "index" INTEGER, "id" INTEGER, "name" TEXT,
+              "post_count" INTEGER, "category" INTEGER
+            );
+            CREATE TABLE tag_aliases ("index" INTEGER, "alias" TEXT, "tag" TEXT);
+            """
+        )
+        for tag_id, name in ((1, "Abigail"), (2, "Abigail_(Gate)")):
+            conn.execute(
+                "INSERT INTO tags (id, name, post_count, category) VALUES (?, ?, ?, ?)",
+                (tag_id, name, 10, 4),
+            )
+        # 同じ alias が2つの canonical を指す
+        conn.execute("INSERT INTO tag_aliases (alias, tag) VALUES (?, ?)", ("abigail", "Abigail"))
+        conn.execute("INSERT INTO tag_aliases (alias, tag) VALUES (?, ?)", ("abigail", "Abigail_(Gate)"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_site_tags_adapter_alias_conflict_first_win_is_recorded(tmp_path: Path) -> None:
+    db = tmp_path / "tags.sqlite"
+    _make_conflicting_alias_db(db)
+
+    adapter = SiteTagsAdapter(db, format_id=1, domain="zerochan.net")
+    _collect_all_chunks(adapter)
+
+    assert len(adapter.alias_conflicts) == 1
+    c = adapter.alias_conflicts[0]
+    assert c.domain == "zerochan.net"
+    assert c.alias == "abigail"
+    assert c.selected_canonical == "Abigail"
+    assert c.rejected_canonical == "Abigail_(Gate)"
+    assert c.resolution_reason == "first-win"
+
+
+def test_site_tags_adapter_alias_conflict_override_wins(tmp_path: Path) -> None:
+    db = tmp_path / "tags.sqlite"
+    _make_conflicting_alias_db(db)
+
+    resolution = AliasResolution({"zerochan.net": {"abigail": "Abigail_(Gate)"}})
+    adapter = SiteTagsAdapter(db, format_id=1, domain="zerochan.net", alias_resolution=resolution)
+    df = _collect_all_chunks(adapter)
+
+    assert len(adapter.alias_conflicts) == 1
+    assert adapter.alias_conflicts[0].resolution_reason == "override"
+    assert adapter.alias_conflicts[0].selected_canonical == "Abigail_(Gate)"
+
+    # override 先（Abigail_(Gate)）の deprecated_tags に alias が入っている
+    got = {r["source_tag"]: r.get("deprecated_tags", "") for r in df.to_dicts()}
+    assert "abigail" not in got
+    assert got["Abigail_(Gate)"] == "abigail"
 
 
 def _collect_all_chunks(adapter: SiteTagsAdapter) -> pl.DataFrame:
