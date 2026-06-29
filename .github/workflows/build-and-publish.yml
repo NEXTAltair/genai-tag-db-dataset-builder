@@ -1,4 +1,4 @@
-name: Build and Publish Dataset
+name: Manual Tag DB Build
 
 on:
   workflow_dispatch:

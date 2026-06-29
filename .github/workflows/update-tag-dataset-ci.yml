@@ -1,4 +1,4 @@
-name: Update Tag Dataset (CI)
+name: Scheduled Tag DB Publish
 
 on:
   schedule:
