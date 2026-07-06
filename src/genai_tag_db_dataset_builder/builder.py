@@ -735,6 +735,74 @@ def _delete_translations_missing_required_script(
     return int(conn.total_changes - changes_before)
 
 
+# Issue #1213: language='ja' に中国語 (簡体字) が混入する問題の検出用。
+# 日本語で使われない簡体字専用の文字集合。共有漢字 (国/学/体 等) は誤検出防止のため除外。
+# _delete_translations_missing_required_script (漢字必須) は中国語も通してしまうため、
+# ja として保存された中国語をこの集合で検出し zh へ再分類する (LoRAIro #1213)。
+_SIMPLIFIED_ONLY_CHINESE_CHARS = frozenset(
+    "计订认讥议讨让训记讲许论讼访设证评识诉词译试诗诚话诞询该详语误说请诸诺读课谁调谈谊谜谢谣谱纠红纤约级纪纫纬纯纱纳纵纶纷纸纹纺线练组绅细织终绍经绑绒结绕绘给绚络绝绞统绢绣继绩绪续绮绯绳维绵综绽绿缀缎缓缔缘缚缝缠缩缨缤针钉钓钗钝钟钢钥钦钩钮钱钻铁铃铅铜铠银铸铺链销锁锄锋锐错锡锣锤锦键锯镇镖镜镰饥饭饮饰饱饲饵饼馆馒门闩闪闭问闯闰闲间闷闸闹闺闻阀阁阅阎阐马驭驮驯驰驱驳驴驶驹驻驼驾骂骄骑骏骗骚骤鸟鸡鸣鸦鸭鸯鸳鸽鹃鹅鹉鹊鹏鹦鹰贝贞负贡财责贤败货质贩贪贫贯贱贴贵贷贸费贺贼贾赁资赋赌赏赐赔赖赚赛赞赠页顶顷项顺须顽顾顿颁颂预颅领颇频颖颗题颜额颠颤车轧轨转轮软轴轻载轿辅辆辈辉辐输辖辗鱼鲁鲜鲤鲨鳞风飘龙庞长东乐书习乡买卖亚产见观觉规视览宽单头发师时电爱华举义乌亏无专丛丝两严丧个丰临为丽么亿仅从仑仓们价众优伙伞伟传伤伦伪侠侧侨俩俭债倾偿儿兰关兴养兽冈军农冯决况净凤凯击刘则刚创剑剧办动势协卫历厅压厌县变叹吓吕吗听启呜员响哑唤团园围图圆圣场坏块坚墙壶处备复够夹夺奋奖妆妇妈娇实宠审宫对寻导尔尘尝层岁岛帅带帮广庆库应庙废开异弃弹强归录忆忧怀态总恶悬惊惧惯愤愿懒戏战户扑执扩扫扬扰抚抢护报拟拥择挂挡挤挥损换显晓暂术杀杂权极构枪枫标树样检樱欢毁毕气汉汤沟泽洁浊测浑浓涂润涩渊满滚滨灭灵灾炼热爷牵犹狮狱猎环现疯疗瘦皱盐监盖盘码础确祸离种积稳穷窗竞笔笼签简粮紧罗罚羡联聪肃肠肤肾肿脏脑脸腾舰艳苏获萝萤营蓝蔷虑虽蜡补衬袜裤这边达迁过运还进远违连迟适选遗邮邻酱释鉴阶际陆隐难雏雾黑默齐齿"
+)
+
+
+def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
+    """language='ja' の中国語行 (簡体字専用文字を含む) を language='zh' へ再分類する.
+
+    取り込み元 (danbooru-ja-tag-pair 等) が全行を ja ラベルで投入するため、中国語訳が
+    ja に混入する (LoRAIro #1213: GUI の日本語表示に「哥特」等が出る)。共有漢字を通す
+    必須文字種チェックでは検出できないため、日本語で使われない簡体字専用文字で検出する。
+
+    UNIQUE(tag_id, language, translation) 衝突 (同内容の zh 行が既存) の場合は ja 行を
+    削除する。それ以外は language を zh へ UPDATE する。
+
+    NOTE: これは下限検出。「哥特」「公主裙」等の簡体字を含まない中国語は検出できない
+    (取り込み元の language ラベリング見直しが根治、本処理は published DB の緩和策)。
+
+    Returns:
+        再分類 (move) + 削除 (dup) した行数の合計。
+    """
+    rows = conn.execute(
+        "SELECT translation_id, tag_id, translation FROM TAG_TRANSLATIONS WHERE language = 'ja'"
+    ).fetchall()
+    if not rows:
+        return 0
+
+    changes_before = conn.total_changes
+    for translation_id, tag_id, text in rows:
+        if not text or not any(ch in _SIMPLIFIED_ONLY_CHINESE_CHARS for ch in str(text)):
+            continue
+        dup = conn.execute(
+            "SELECT 1 FROM TAG_TRANSLATIONS WHERE tag_id = ? AND language = 'zh' AND translation = ?",
+            (tag_id, text),
+        ).fetchone()
+        if dup is not None:
+            conn.execute("DELETE FROM TAG_TRANSLATIONS WHERE translation_id = ?", (int(translation_id),))
+        else:
+            conn.execute(
+                "UPDATE TAG_TRANSLATIONS SET language = 'zh' WHERE translation_id = ?",
+                (int(translation_id),),
+            )
+    conn.commit()
+    return int(conn.total_changes - changes_before)
+
+
+def _delete_underscore_alias_translations(conn: sqlite3.Connection) -> int:
+    """先頭 '_' のエイリアス文字列が en 翻訳に混入した行を削除する (LoRAIro #1213).
+
+    deepghs 系のエイリアス表記 ('___sparkles', '__1girl' 等) が en の「翻訳」として
+    TAG_TRANSLATIONS に入り、翻訳表示・翻訳有無判定を汚す。これらは実際の英訳ではなく
+    alias 表記なので翻訳としては不要。alias 関係自体は TAG_STATUS 側が担うため、
+    翻訳テーブルからは削除する (Issue #1213 の「または削除」)。
+
+    Returns:
+        削除した行数。
+    """
+    changes_before = conn.total_changes
+    # LIKE のワイルドカード '_' をリテラルとして扱うため ESCAPE '~' を使う (backslash 回避)。
+    conn.execute("DELETE FROM TAG_TRANSLATIONS WHERE language = 'en' AND translation LIKE '~_%' ESCAPE '~'")
+    conn.commit()
+    return int(conn.total_changes - changes_before)
+
+
 def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
     """TAG_TRANSLATIONS のカンマ区切り翻訳を分割して再投入する."""
     rows = conn.execute(
@@ -2205,6 +2273,37 @@ def build_dataset(
             logger.warning(
                 f"[Cleanup] Total deleted translations (required script filter): {total_deleted}"
             )
+
+        # LoRAIro #1213: language='ja' に混入した中国語 (簡体字専用文字を含む) を zh へ再分類。
+        # 必須文字種チェック (漢字) は中国語も通すため、別途この検出が必要。
+        changes_before = conn.total_changes
+        zh_reclassified = _reclassify_chinese_ja_translations_as_zh(conn)
+        if zh_reclassified > 0:
+            source_effects.append(
+                {
+                    "source": "TAG_TRANSLATIONS",
+                    "action": "cleanup_reclassified",
+                    "rows_read": 0,
+                    "db_changes": int(conn.total_changes - changes_before),
+                    "note": "reclassify_chinese_ja_to_zh",
+                }
+            )
+            logger.warning(f"[Cleanup] Reclassified {zh_reclassified} ja->zh translations (Chinese in ja)")
+
+        # LoRAIro #1213: 先頭 '_' のエイリアス表記が en 翻訳に混入した行を削除。
+        changes_before = conn.total_changes
+        underscore_deleted = _delete_underscore_alias_translations(conn)
+        if underscore_deleted > 0:
+            source_effects.append(
+                {
+                    "source": "TAG_TRANSLATIONS",
+                    "action": "cleanup_deleted",
+                    "rows_read": 0,
+                    "db_changes": int(conn.total_changes - changes_before),
+                    "note": "delete_underscore_alias_en_translations",
+                }
+            )
+            logger.warning(f"[Cleanup] Deleted {underscore_deleted} '_'-prefixed en alias translations")
 
         changes_before = conn.total_changes
         split_deleted = _split_comma_delimited_translations(conn)

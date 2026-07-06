@@ -165,3 +165,77 @@ def test_split_comma_delimited_translations_replaces_single_part() -> None:
     assert (1, "ja", "崩壊") in remaining
     assert (2, "ja", "つくよみちゃん") in remaining
     assert not any(r[2].startswith(",") or r[2].endswith(",") for r in remaining)
+
+
+def test_reclassify_chinese_ja_translations_as_zh_moves_and_dedupes() -> None:
+    """language='ja' の中国語 (簡体字) を zh へ再分類。zh 重複は削除 (LoRAIro #1213)。"""
+    from genai_tag_db_dataset_builder.builder import _reclassify_chinese_ja_translations_as_zh
+
+    conn = _create_minimal_translations_db()
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+        [
+            (1, "ja", "发饰"),  # 简体 '发' → zh へ move
+            (2, "ja", "电话"),  # 简体 '电' → zh へ move
+            (3, "ja", "猫耳"),  # 日本語 (簡体字専用文字なし) → ja のまま
+            (4, "ja", "独角兽"),  # 简体 '兽' → zh へ move (import 元の language 誤り)
+            (5, "zh", "发饰"),  # 既存 zh
+            (5, "ja", "发饰"),  # tag_id=5 は zh 重複あり → 削除
+        ],
+    )
+    conn.commit()
+
+    moved = _reclassify_chinese_ja_translations_as_zh(conn)
+    assert moved == 4  # 3 move + 1 delete
+
+    remaining = conn.execute(
+        "SELECT tag_id, language, translation FROM TAG_TRANSLATIONS ORDER BY tag_id, language"
+    ).fetchall()
+    # 日本語はそのまま
+    assert (3, "ja", "猫耳") in remaining
+    # 中国語は zh へ
+    assert (1, "zh", "发饰") in remaining
+    assert (2, "zh", "电话") in remaining
+    assert (4, "zh", "独角兽") in remaining
+    # tag_id=5 の ja 重複は削除され、zh 1 件のみ
+    tag5 = [r for r in remaining if r[0] == 5]
+    assert tag5 == [(5, "zh", "发饰")]
+    # ja に簡体字専用文字を含む行は残っていない
+    assert not any(r[1] == "ja" and r[2] in ("发饰", "电话", "独角兽") for r in remaining)
+
+
+def test_delete_underscore_alias_translations_removes_only_underscore_en() -> None:
+    """先頭 '_' の en 翻訳 (エイリアス表記) のみ削除する (LoRAIro #1213)。"""
+    from genai_tag_db_dataset_builder.builder import _delete_underscore_alias_translations
+
+    conn = _create_minimal_translations_db()
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+        [
+            (1, "en", "___sparkles"),  # 削除対象
+            (2, "en", "__1girl"),  # 削除対象
+            (3, "en", "sparkles"),  # 通常訳 → 残す
+            (4, "ja", "_test"),  # ja の '_' は対象外 → 残す
+            (5, "en", "a_b"),  # 中間 '_' は対象外 → 残す
+        ],
+    )
+    conn.commit()
+
+    deleted = _delete_underscore_alias_translations(conn)
+    assert deleted == 2
+
+    remaining = conn.execute(
+        "SELECT language, translation FROM TAG_TRANSLATIONS ORDER BY translation_id"
+    ).fetchall()
+    assert ("en", "___sparkles") not in remaining
+    assert ("en", "__1girl") not in remaining
+    assert ("en", "sparkles") in remaining
+    assert ("ja", "_test") in remaining
+    assert ("en", "a_b") in remaining
+
+
+def test_reclassify_chinese_ja_empty_is_noop() -> None:
+    from genai_tag_db_dataset_builder.builder import _reclassify_chinese_ja_translations_as_zh
+
+    conn = _create_minimal_translations_db()
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 0
