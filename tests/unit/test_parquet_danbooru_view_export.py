@@ -45,6 +45,7 @@ def test_export_danbooru_view_parquet_creates_expected_columns(tmp_path: Path) -
                 (1, 1, "ja", "猫耳"),
                 (2, 1, "ja", "ねこみみ"),
                 (3, 1, "zh", "猫耳"),
+                (4, 1, "ko", "고양이귀"),
             ],
         )
         conn.commit()
@@ -65,6 +66,7 @@ def test_export_danbooru_view_parquet_creates_expected_columns(tmp_path: Path) -
         "deprecated_tags",
         "lang_ja",
         "lang_zh",
+        "lang_ko",
     ]
 
     row = df.to_dicts()[0]
@@ -74,3 +76,4 @@ def test_export_danbooru_view_parquet_creates_expected_columns(tmp_path: Path) -
     assert row["deprecated_tags"] == ["nekomimi"]
     assert row["lang_ja"] == ["猫耳", "ねこみみ"]
     assert row["lang_zh"] == ["猫耳"]
+    assert row["lang_ko"] == ["고양이귀"]

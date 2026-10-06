@@ -1728,6 +1728,18 @@ def _export_danbooru_view_parquet(
         ORDER BY tag_id, translation_id
       )
       GROUP BY tag_id
+    ),
+    tr_ko AS (
+      SELECT tag_id,
+             group_concat(translation, '{sep}') AS lang_ko_str
+      FROM (
+        SELECT tag_id, translation
+        FROM TAG_TRANSLATIONS
+        WHERE language = 'ko'
+          AND tag_id BETWEEN {{lo}} AND {{hi}}
+        ORDER BY tag_id, translation_id
+      )
+      GROUP BY tag_id
     )
     SELECT
       t.tag_id AS tag_id,
@@ -1737,7 +1749,8 @@ def _export_danbooru_view_parquet(
       uc.count AS count,
       alias_rev.deprecated_tags_str AS deprecated_tags_str,
       tr_ja.lang_ja_str AS lang_ja_str,
-      tr_zh.lang_zh_str AS lang_zh_str
+      tr_zh.lang_zh_str AS lang_zh_str,
+      tr_ko.lang_ko_str AS lang_ko_str
     FROM canon
     JOIN TAGS t ON t.tag_id = canon.tag_id
     JOIN TAG_FORMATS f ON f.format_id = 1
@@ -1754,6 +1767,8 @@ def _export_danbooru_view_parquet(
       ON tr_ja.tag_id = t.tag_id
     LEFT JOIN tr_zh
       ON tr_zh.tag_id = t.tag_id
+    LEFT JOIN tr_ko
+      ON tr_ko.tag_id = t.tag_id
     ORDER BY t.tag_id
     """
 
@@ -1789,6 +1804,7 @@ def _export_danbooru_view_parquet(
                     "deprecated_tags_str": pl.Utf8,
                     "lang_ja_str": pl.Utf8,
                     "lang_zh_str": pl.Utf8,
+                    "lang_ko_str": pl.Utf8,
                 },
             )
         except Exception as e:
@@ -1811,8 +1827,9 @@ def _export_danbooru_view_parquet(
                 _split_list("deprecated_tags_str"),
                 _split_list("lang_ja_str"),
                 _split_list("lang_zh_str"),
+                _split_list("lang_ko_str"),
             ]
-        ).drop(["deprecated_tags_str", "lang_ja_str", "lang_zh_str"])
+        ).drop(["deprecated_tags_str", "lang_ja_str", "lang_zh_str", "lang_ko_str"])
 
         out_path = output_dir / f"danbooru-{shard:05d}.parquet"
         df.write_parquet(out_path, compression="zstd")

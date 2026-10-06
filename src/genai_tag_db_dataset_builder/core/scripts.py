@@ -10,8 +10,8 @@ SIMPLIFIED_ONLY_CHINESE_CHARS = frozenset(
 )
 
 # 仮名のみ。Katakana ブロック内の記号 (U+30A0, ・ U+30FB, ー U+30FC) は他言語の訳語にも
-# 現れるため含めない。ひらがな/カタカナの文字と踊り字 (ゝゞ ヽヾ) を対象にする。
-_KANA_RE = re.compile("[\u3041-\u3096\u309d\u309e\u30a1-\u30fa\u30fd\u30fe]")
+# 現れるため含めない。ひらがな/カタカナの文字・踊り字 (ゝゞ ヽヾ)・半角カタカナ (U+FF66-FF9D) を対象にする。
+_KANA_RE = re.compile("[\u3041-\u3096\u309d\u309e\u30a1-\u30fa\u30fd\u30fe\uff66-\uff9d]")
 _HANGUL_RE = re.compile("[\uac00-\ud7af]")
 _CJK_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 

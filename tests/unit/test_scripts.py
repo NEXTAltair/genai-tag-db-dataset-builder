@@ -11,6 +11,7 @@ from genai_tag_db_dataset_builder.core.scripts import guess_language_by_script
         ("オリジナル", "ja"),
         ("うちの子", "ja"),
         ("ラーメン", "ja"),
+        ("ｵﾘｼﾞﾅﾙ", "ja"),
         ("창작", "ko"),
         ("原創", "zh"),
         # 記号だけの U+30FB / U+30FC / U+30A0 は仮名とみなさない

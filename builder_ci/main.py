@@ -312,11 +312,19 @@ def _build_target(
     hf_repo_id: str | None = None,
     override_path: Path | None = None,
     alias_resolution: AliasResolution | None = None,
+    inherited_sources: list[dict] | None = None,
 ) -> Path:
     logger.info(f"=== Build start: {target.name} ===")
 
     builder_version = _current_builder_version(_repo_root())
     source_meta = _fetch_sources(sources, external_sources_dir, force=force)
+    # MIT/CC4 は CC0 DB をベースにするため、CC0 ソースの更新も再ビルド判定の入力に含める。
+    # (そうしないと CC0 ソースだけが更新された週に派生ビルドが再ビルドされず古いままになる)
+    if inherited_sources:
+        source_meta.extend(
+            {**meta, "id": f"inherited:{meta['id']}"}
+            for meta in _fetch_sources(inherited_sources, external_sources_dir, force=force)
+        )
     staged_paths = _stage_translation_csvs(sources, external_sources_dir, sources_dir)
     include_path = _generate_include_filter(
         sources,
@@ -517,6 +525,7 @@ def orchestrate(
             hf_repo_id=repo_mit,
             override_path=override_path,
             alias_resolution=alias_resolution,
+            inherited_sources=_select_sources_for_target(sources, "cc0"),
         )
 
     def run_cc4(cc0_db: Path) -> None:
@@ -536,6 +545,7 @@ def orchestrate(
             hf_repo_id=repo_cc4,
             override_path=override_path,
             alias_resolution=alias_resolution,
+            inherited_sources=_select_sources_for_target(sources, "cc0"),
         )
 
     if target == "cc0":
