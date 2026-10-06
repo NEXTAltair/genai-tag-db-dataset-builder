@@ -98,3 +98,52 @@ def test_derived_build_skips_when_inherited_cc0_source_unchanged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     assert _run_build_target(monkeypatch, tmp_path, cc0_revision="old") is False
+
+
+def test_build_target_enables_site_tags_only_for_site_tags_sources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CC4 (site_tags ソースあり) だけ site_tags を有効にし、CC0/MIT はキャッシュが残っていても無効にする."""
+    captured: list[bool] = []
+
+    def _run(sources: list[dict]) -> None:
+        out_dir = tmp_path / f"out{len(captured)}"
+        out_dir.mkdir()
+        target = ci_main.TargetConfig(
+            name="t",
+            repo_id="repo",
+            output_dir=out_dir,
+            output_db=out_dir / "t.sqlite",
+            parquet_dir=out_dir / "parquet",
+            report_dir=out_dir / "report",
+            manifest_path=out_dir / "build_manifest.json",
+        )
+        monkeypatch.setattr(ci_main, "_current_builder_version", lambda _root: "bv")
+        monkeypatch.setattr(ci_main, "_fetch_sources", lambda *_a, **_k: [])
+        monkeypatch.setattr(ci_main, "_stage_translation_csvs", lambda *_a, **_k: [])
+        monkeypatch.setattr(ci_main, "_generate_include_filter", lambda *_a, **_k: tmp_path / "inc.txt")
+
+        def _build_dataset(**kwargs: Any) -> None:
+            captured.append(kwargs["enable_site_tags"])
+            raise _StopBuildError
+
+        monkeypatch.setattr(ci_main, "build_dataset", _build_dataset)
+        with pytest.raises(_StopBuildError):
+            ci_main._build_target(
+                target=target,
+                sources=sources,
+                sources_dir=tmp_path,
+                external_sources_dir=tmp_path / "ext",
+                base_db_path=tmp_path / "base.sqlite",
+                base_db_info={"repo_id": "x"},
+                sources_yml=tmp_path / "sources.yml",
+                version="v",
+                force=True,
+                publish=False,
+                publish_repo_id=None,
+            )
+
+    _run([{"id": "p1", "kind": "hf_dataset", "data_type": "translation_ja"}])
+    _run([{"id": "site_tags", "kind": "hf_dataset", "data_type": "site_tags_sqlite"}])
+
+    assert captured == [False, True]
