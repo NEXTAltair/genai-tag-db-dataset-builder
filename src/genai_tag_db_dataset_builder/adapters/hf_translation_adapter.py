@@ -154,5 +154,3 @@ class P1atdevDanbooruJaTagPairAdapter:
         if not records:
             return pl.DataFrame({"source_tag": [], out_col: []})
         return pl.DataFrame(records).rename({"lang_value": out_col})
-
-        return pl.DataFrame(records)
