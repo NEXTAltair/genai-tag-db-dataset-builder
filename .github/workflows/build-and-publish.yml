@@ -11,6 +11,10 @@ on:
         description: 'Upload to HuggingFace'
         required: true
         type: boolean
+      base_revision:
+        description: 'Pin CC0 base DB to this HF revision (recovery only; empty = latest). Forces rebuild of all targets'
+        required: false
+        type: string
     default: false
 
 permissions:
@@ -50,8 +54,17 @@ jobs:
       - name: Run CI orchestrator (build CC0 -> MIT/CC4)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          BASE_REVISION: ${{ github.event.inputs.base_revision }}
         run: |
           FORCE_FLAG=""
+          BASE_REV_FLAG=""
+          if [ -n "${BASE_REVISION}" ]; then
+            if ! echo "${BASE_REVISION}" | grep -Eq '^[0-9a-f]{7,40}$'; then
+              echo "base_revision must be a hex commit hash (7-40 chars): ${BASE_REVISION}" >&2
+              exit 1
+            fi
+            BASE_REV_FLAG="--base-cc0-revision ${BASE_REVISION}"
+          fi
           if [ "${{ github.event.inputs.upload_to_hf }}" = "true" ]; then
             PUBLISH_FLAG="--publish"
           else
@@ -70,6 +83,7 @@ jobs:
             --repo-cc4 "${HF_REPO_CC4}" \
             --version "${{ github.event.inputs.version }}" \
             ${PUBLISH_FLAG} \
+            ${BASE_REV_FLAG} \
             ${FORCE_FLAG}
 
       - name: Upload artifacts

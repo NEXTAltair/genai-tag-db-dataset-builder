@@ -174,13 +174,20 @@ def _hf_wiki_multilang_datasets(sources: Iterable[dict]) -> list[str]:
     ]
 
 
-def _download_base_db(repo_id: str, dest_dir: Path, force: bool = False) -> dict:
-    api = HfApi()
-    try:
-        info = api.dataset_info(repo_id, repo_type="dataset")
-    except TypeError:
-        info = api.dataset_info(repo_id)
-    revision = info.sha
+def _download_base_db(
+    repo_id: str,
+    dest_dir: Path,
+    force: bool = False,
+    revision: str | None = None,
+) -> dict:
+    """ベース DB を取得する. revision 未指定なら HF 上の最新リビジョンを使う."""
+    if revision is None:
+        api = HfApi()
+        try:
+            info = api.dataset_info(repo_id, repo_type="dataset")
+        except TypeError:
+            info = api.dataset_info(repo_id)
+        revision = info.sha
     sha_path = dest_dir / ".hf_sha"
 
     if dest_dir.exists() and not force:
@@ -460,6 +467,7 @@ def orchestrate(
     repo_cc0: str | None,
     repo_mit: str | None,
     repo_cc4: str | None,
+    base_revision: str | None = None,
 ) -> None:
     sources_dir = Path(sources_dir)
     output_root = Path(output_root)
@@ -484,7 +492,12 @@ def orchestrate(
             manifest_path=out_dir / "build_manifest.json",
         )
 
-    base_info = _download_base_db(base_repo_cc0, base_db_dir, force=force)
+    if base_revision:
+        # ベースを過去リビジョンへ固定するのは復旧用途。MIT/CC4 も含めて必ず作り直す
+        # (ソースの revision が変わらず「更新なし」でスキップされるのを防ぐ)。
+        logger.warning(f"Base DB pinned to revision {base_revision}; forcing rebuild of all targets")
+        force = True
+    base_info = _download_base_db(base_repo_cc0, base_db_dir, force=force, revision=base_revision or None)
     base_db_path = Path(base_info["path"])
     logger.info(f"Applying migrations to base DB cache: {base_db_path}")
     migrate(base_db_path)
@@ -619,6 +632,14 @@ def main() -> None:
         help="HF dataset repo id for CC0 base DB",
     )
     p.add_argument(
+        "--base-cc0-revision",
+        default=None,
+        help=(
+            "Pin the CC0 base DB to this HF revision (recovery use). "
+            "Implies --force so MIT/CC4 are rebuilt too."
+        ),
+    )
+    p.add_argument(
         "--version",
         default=datetime.now(UTC).strftime("v%Y.%m.%d"),
         help="Dataset version string",
@@ -651,6 +672,7 @@ def main() -> None:
         repo_cc0=args.repo_cc0,
         repo_mit=args.repo_mit,
         repo_cc4=args.repo_cc4,
+        base_revision=args.base_cc0_revision,
     )
 
 
