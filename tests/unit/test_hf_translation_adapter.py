@@ -48,7 +48,7 @@ def test_p1atdev_adapter_supports_title_other_names_schema(tmp_path: Path) -> No
     assert not any(src == "deleted_tag" for (src, _) in got)
 
 
-def test_adapter_parses_stringified_other_names_and_filters_kana(tmp_path: Path) -> None:
+def test_adapter_parses_stringified_other_names_and_splits_by_script(tmp_path: Path) -> None:
     # lylogummy/danbooru_wikis_2026 は other_names を list ではなく文字列で持つ
     ds = Dataset.from_dict(
         {
@@ -63,8 +63,15 @@ def test_adapter_parses_stringified_other_names_and_filters_kana(tmp_path: Path)
     plain = P1atdevDanbooruJaTagPairAdapter(save_dir.as_posix()).read()
     assert {r["japanese"] for r in plain.to_dicts()} == {"オリジナル", "原創", "창작", "oc", "うちの子"}
 
-    kana = P1atdevDanbooruJaTagPairAdapter(save_dir.as_posix(), require_kana=True).read()
-    assert {r["japanese"] for r in kana.to_dicts()} == {"オリジナル", "うちの子"}
+    split = P1atdevDanbooruJaTagPairAdapter(save_dir.as_posix(), classify_scripts=True).read()
+    assert set(split.columns) == {"source_tag", "japanese", "zh", "ko"}
+    got = {(col, r[col]) for r in split.to_dicts() for col in ("japanese", "zh", "ko") if r[col]}
+    assert got == {
+        ("japanese", "オリジナル"),
+        ("japanese", "うちの子"),
+        ("zh", "原創"),
+        ("ko", "창작"),
+    }
 
 
 def test_adapter_reads_zh_and_drops_kana_rows(tmp_path: Path) -> None:

@@ -28,7 +28,8 @@ sources:
     enabled: true
 
   # MIT source: Danbooru wiki dump (2026-03). deepghs/site_tags と p1atdev の更新停止を補う。
-  # other_names は未フィルタ (繁体字中国語・韓国語等を含む) のため仮名を含む訳語のみ採用する。
+  # other_names は未フィルタ (中国語・韓国語等を含む) のため、文字種で ja/ko/zh に振り分けて取り込む
+  # (仮名→ja, ハングル→ko, 漢字のみ→zh, ラテン文字等→捨てる)。
   - id: danbooru-wikis-2026
     kind: hf_dataset
     repo_id: lylogummy/danbooru_wikis_2026
@@ -38,7 +39,7 @@ sources:
     data_type: translation_ja
     hf_config:
       use_datasets_api: true
-      ja_require_kana: true
+      classify_scripts: true
     revision_tracking: hf_revision
     enabled: true
 

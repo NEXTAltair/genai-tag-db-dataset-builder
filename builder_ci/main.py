@@ -164,13 +164,13 @@ def _hf_zh_translation_datasets(sources: Iterable[dict]) -> list[str]:
     ]
 
 
-def _hf_ja_kana_only_datasets(sources: Iterable[dict]) -> list[str]:
+def _hf_wiki_multilang_datasets(sources: Iterable[dict]) -> list[str]:
     return [
         src["repo_id"]
         for src in sources
         if src.get("data_type") == "translation_ja"
         and src.get("hf_config", {}).get("use_datasets_api")
-        and src.get("hf_config", {}).get("ja_require_kana")
+        and src.get("hf_config", {}).get("classify_scripts")
     ]
 
 
@@ -326,7 +326,7 @@ def _build_target(
     )
     hf_ja_datasets = _hf_translation_datasets(sources)
     hf_zh_datasets = _hf_zh_translation_datasets(sources)
-    hf_ja_kana_only = _hf_ja_kana_only_datasets(sources)
+    hf_wiki_multilang = _hf_wiki_multilang_datasets(sources)
 
     override_hash = compute_override_hash(override_path)
 
@@ -378,7 +378,7 @@ def _build_target(
         include_sources_path=include_path,
         hf_ja_translation_datasets=hf_ja_datasets,
         hf_zh_translation_datasets=hf_zh_datasets,
-        hf_ja_kana_only_datasets=hf_ja_kana_only,
+        hf_wiki_multilang_datasets=hf_wiki_multilang,
         parquet_output_dir=target.parquet_dir,
         base_db_path=base_db_path,
         overwrite=True,

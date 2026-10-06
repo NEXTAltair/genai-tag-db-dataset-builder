@@ -25,6 +25,8 @@ from datasets import (  # type: ignore[import-untyped,unused-ignore]
     load_from_disk,
 )
 
+from ..core.scripts import guess_language_by_script, has_kana
+
 
 def _is_local_dataset_path(repo_id_or_path: str) -> bool:
     p = Path(repo_id_or_path)
@@ -49,15 +51,13 @@ def _pick_column(cols: list[str], candidates: list[str]) -> str | None:
 _TRANSLATION_SPLIT_RE = re.compile("[,\uff0c\u3001\uff64\ufe50]")
 
 
-_KANA_RE = re.compile("[\u3040-\u30ff]")
-
 # 言語ごとの翻訳列候補（先頭ほど優先）。
 _TRANSLATION_COLUMNS: dict[str, list[str]] = {
     "ja": ["japanese", "ja", "jp", "translation", "other_names"],
     "zh": ["chinese", "zh", "zh_cn", "zh-cn"],
 }
 # builder の _extract_translations が言語コードを推定できる列名。
-_OUTPUT_COLUMN: dict[str, str] = {"ja": "japanese", "zh": "zh"}
+_OUTPUT_COLUMN: dict[str, str] = {"ja": "japanese", "zh": "zh", "ko": "ko"}
 
 
 def _parse_stringified_list(s: str) -> list[Any] | None:
@@ -100,10 +100,9 @@ class P1atdevDanbooruJaTagPairAdapter:
     revision: str | None = None
     split: str | None = None
     language: str = "ja"
-    # True の場合、ja で仮名を含まない訳語を捨てる。
-    # 未フィルタの wiki other_names は繁体字中国語が漢字のみの形で混ざり、
-    # ビルド後段の簡体字検出では除去できないため、生 wiki 系ソース向けに使う。
-    require_kana: bool = False
+    # True の場合、訳語を文字種で ja / ko / zh に振り分ける（ラテン文字等は捨てる）。
+    # 未フィルタの wiki other_names は多言語が混在するため、生 wiki 系ソース向けに使う。
+    classify_scripts: bool = False
 
     def read(self) -> pl.DataFrame:
         if _is_local_dataset_path(self.repo_id_or_path):
@@ -132,6 +131,7 @@ class P1atdevDanbooruJaTagPairAdapter:
             raise ValueError(msg)
 
         records: list[dict[str, str]] = []
+        wide_records: list[dict[str, str]] = []
         for row in ds:
             # deleted は翻訳として使わない
             if bool(row.get("is_deleted", False)):
@@ -141,14 +141,21 @@ class P1atdevDanbooruJaTagPairAdapter:
                 continue
             translations = _explode_translations(row.get(jp_col))
             for t in translations:
-                has_kana = _KANA_RE.search(t) is not None
-                if self.language == "ja" and self.require_kana and not has_kana:
+                if self.classify_scripts:
+                    lang = guess_language_by_script(t)
+                    if lang is None:
+                        continue
+                    wide_records.append({"source_tag": tag, _OUTPUT_COLUMN.get(lang, lang): t})
                     continue
                 # zh 列にアーティスト名などの日本語原表記が入るため、仮名を含む行は捨てる
-                if self.language == "zh" and has_kana:
+                if self.language == "zh" and has_kana(t):
                     continue
                 # builder の既存翻訳取り込みロジック（_extract_translations）に合わせて言語別列名にする
                 records.append({"source_tag": tag, "lang_value": t})
+
+        if self.classify_scripts:
+            schema = {"source_tag": pl.Utf8, "japanese": pl.Utf8, "zh": pl.Utf8, "ko": pl.Utf8}
+            return pl.DataFrame(wide_records, schema=schema)
 
         out_col = _OUTPUT_COLUMN.get(self.language, self.language)
         if not records:
