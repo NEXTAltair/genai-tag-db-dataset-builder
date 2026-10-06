@@ -147,3 +147,24 @@ def test_build_target_enables_site_tags_only_for_site_tags_sources(
     _run([{"id": "site_tags", "kind": "hf_dataset", "data_type": "site_tags_sqlite"}])
 
     assert captured == [False, True]
+
+
+def test_download_base_db_uses_pinned_revision(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """revision 指定時は HF の最新リビジョンを問い合わせず、指定リビジョンで取得する."""
+    calls: dict[str, Any] = {}
+
+    class _NoLatestApi:
+        def dataset_info(self, *_a: Any, **_k: Any) -> Any:
+            raise AssertionError("latest revision must not be queried when pinned")
+
+    def _snapshot_download(**kwargs: Any) -> None:
+        calls.update(kwargs)
+        (Path(kwargs["local_dir"]) / "base.sqlite").write_bytes(b"x")
+
+    monkeypatch.setattr(ci_main, "HfApi", _NoLatestApi)
+    monkeypatch.setattr(ci_main, "snapshot_download", _snapshot_download)
+
+    info = ci_main._download_base_db("owner/repo", tmp_path / "base", revision="69adee36")
+
+    assert calls["revision"] == "69adee36"
+    assert info["revision"] == "69adee36"
