@@ -1848,13 +1848,14 @@ def build_dataset(
     include_sources_path: Path | str | None = None,
     exclude_sources_path: Path | str | None = None,
     hf_ja_translation_datasets: list[str] | None = None,
-    hf_zh_translation_datasets: list[str] | None = None,
-    hf_wiki_multilang_datasets: list[str] | None = None,
-    enable_site_tags: bool = True,
     parquet_output_dir: Path | str | None = None,
     base_db_path: Path | str | None = None,
     overwrite: bool = False,
     alias_resolution: AliasResolution | None = None,
+    # 以下は後から追加した引数。既存の位置引数呼び出しを壊さないよう末尾に置く。
+    hf_zh_translation_datasets: list[str] | None = None,
+    hf_wiki_multilang_datasets: list[str] | None = None,
+    enable_site_tags: bool = True,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
 
