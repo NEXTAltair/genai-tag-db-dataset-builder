@@ -35,12 +35,16 @@ def _upload_folder(
     if not folder_path.exists():
         logger.warning(f"Missing folder, skipping upload: {folder_path}")
         return
+    # delete_patterns="*": リポジトリ側のこのフォルダにだけ残っている古いファイルを削除する。
+    # (これが無いと、シャード数が減ったビルドで過去のビルドの parquet_danbooru/*.parquet が
+    #  残り続け、Dataset Viewer や利用者に古い (混入を含む) データが見えてしまう)
     api.upload_folder(
         folder_path=str(folder_path),
         path_in_repo=folder_path.name,
         repo_id=repo_id,
         repo_type="dataset",
         commit_message=commit_message,
+        delete_patterns="*",
     )
 
 
