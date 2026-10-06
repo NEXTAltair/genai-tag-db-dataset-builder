@@ -156,6 +156,24 @@ def _hf_translation_datasets(sources: Iterable[dict]) -> list[str]:
     return datasets
 
 
+def _hf_zh_translation_datasets(sources: Iterable[dict]) -> list[str]:
+    return [
+        src["repo_id"]
+        for src in sources
+        if src.get("data_type") == "translation_zh" and src.get("hf_config", {}).get("use_datasets_api")
+    ]
+
+
+def _hf_ja_kana_only_datasets(sources: Iterable[dict]) -> list[str]:
+    return [
+        src["repo_id"]
+        for src in sources
+        if src.get("data_type") == "translation_ja"
+        and src.get("hf_config", {}).get("use_datasets_api")
+        and src.get("hf_config", {}).get("ja_require_kana")
+    ]
+
+
 def _download_base_db(repo_id: str, dest_dir: Path, force: bool = False) -> dict:
     api = HfApi()
     try:
@@ -307,6 +325,8 @@ def _build_target(
         extra_paths=staged_paths,
     )
     hf_ja_datasets = _hf_translation_datasets(sources)
+    hf_zh_datasets = _hf_zh_translation_datasets(sources)
+    hf_ja_kana_only = _hf_ja_kana_only_datasets(sources)
 
     override_hash = compute_override_hash(override_path)
 
@@ -357,6 +377,8 @@ def _build_target(
         report_dir=target.report_dir,
         include_sources_path=include_path,
         hf_ja_translation_datasets=hf_ja_datasets,
+        hf_zh_translation_datasets=hf_zh_datasets,
+        hf_ja_kana_only_datasets=hf_ja_kana_only,
         parquet_output_dir=target.parquet_dir,
         base_db_path=base_db_path,
         overwrite=True,

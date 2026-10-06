@@ -46,3 +46,38 @@ def test_p1atdev_adapter_supports_title_other_names_schema(tmp_path: Path) -> No
     got = {(r["source_tag"], r["japanese"]) for r in df.to_dicts()}
     assert ("original", "オリジナル") in got
     assert not any(src == "deleted_tag" for (src, _) in got)
+
+
+def test_adapter_parses_stringified_other_names_and_filters_kana(tmp_path: Path) -> None:
+    # lylogummy/danbooru_wikis_2026 は other_names を list ではなく文字列で持つ
+    ds = Dataset.from_dict(
+        {
+            "title": ["original"],
+            "other_names": ["['オリジナル', '原創', '창작', 'oc', 'うちの子']"],
+            "is_deleted": [False],
+        }
+    )
+    save_dir = tmp_path / "hf_wiki"
+    ds.save_to_disk(save_dir.as_posix())
+
+    plain = P1atdevDanbooruJaTagPairAdapter(save_dir.as_posix()).read()
+    assert {r["japanese"] for r in plain.to_dicts()} == {"オリジナル", "原創", "창작", "oc", "うちの子"}
+
+    kana = P1atdevDanbooruJaTagPairAdapter(save_dir.as_posix(), require_kana=True).read()
+    assert {r["japanese"] for r in kana.to_dicts()} == {"オリジナル", "うちの子"}
+
+
+def test_adapter_reads_zh_and_drops_kana_rows(tmp_path: Path) -> None:
+    ds = Dataset.from_dict(
+        {
+            "tag": ["touhou", "dairi"],
+            "zh": ["东方Project", "ダイリ"],
+            "count": [1, 2],
+        }
+    )
+    save_dir = tmp_path / "hf_zh"
+    ds.save_to_disk(save_dir.as_posix())
+
+    df = P1atdevDanbooruJaTagPairAdapter(save_dir.as_posix(), language="zh").read()
+    assert set(df.columns) == {"source_tag", "zh"}
+    assert [(r["source_tag"], r["zh"]) for r in df.to_dicts()] == [("touhou", "东方Project")]

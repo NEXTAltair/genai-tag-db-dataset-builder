@@ -1833,6 +1833,8 @@ def build_dataset(
     include_sources_path: Path | str | None = None,
     exclude_sources_path: Path | str | None = None,
     hf_ja_translation_datasets: list[str] | None = None,
+    hf_zh_translation_datasets: list[str] | None = None,
+    hf_ja_kana_only_datasets: list[str] | None = None,
     parquet_output_dir: Path | str | None = None,
     base_db_path: Path | str | None = None,
     overwrite: bool = False,
@@ -1846,6 +1848,9 @@ def build_dataset(
         version: データセットバージョン（例: "v4.1.0"）
         report_dir: レポート出力先ディレクトリ（Noneの場合はレポート出力なし）
         hf_ja_translation_datasets: Hugging Face datasets から日本語翻訳を取り込む（例: p1atdev/danbooru-ja-tag-pair-20241015）
+        hf_zh_translation_datasets: Hugging Face datasets から中国語翻訳を取り込む（例: ame-la/danbooru-tags-data-zh）
+        hf_ja_kana_only_datasets: hf_ja_translation_datasets のうち、仮名を含む訳語のみ採用する repo_id
+            （未フィルタの wiki other_names 由来で繁体字中国語が混ざるソース向け）
         parquet_output_dir: Parquet出力先ディレクトリ（Noneの場合はParquet出力なし）
         base_db_path: ベースとなる既存SQLiteファイル（MIT版ビルド等で使用）。指定時はPhase 0/1をスキップ
         overwrite: 既存のoutput_pathを上書きするか
@@ -1951,16 +1956,23 @@ def build_dataset(
                 }
             )
 
-        # Phase 1.5: Hugging Face datasets から翻訳（日本語）を取り込む（任意）
-        if hf_ja_translation_datasets:
-            logger.info(
-                f"[Phase 1.5] Importing HF JA translations: {len(hf_ja_translation_datasets)} dataset(s)"
-            )
-            for repo_id in hf_ja_translation_datasets:
+        # Phase 1.5: Hugging Face datasets から翻訳（日本語/中国語）を取り込む（任意）
+        kana_only = set(hf_ja_kana_only_datasets or [])
+        hf_translation_jobs: list[tuple[str, str]] = [
+            *((repo_id, "ja") for repo_id in hf_ja_translation_datasets or []),
+            *((repo_id, "zh") for repo_id in hf_zh_translation_datasets or []),
+        ]
+        if hf_translation_jobs:
+            logger.info(f"[Phase 1.5] Importing HF translations: {len(hf_translation_jobs)} dataset(s)")
+            for repo_id, hf_language in hf_translation_jobs:
                 source_name = f"hf://datasets/{repo_id}"
                 changes_before = conn.total_changes
                 try:
-                    df_hf = P1atdevDanbooruJaTagPairAdapter(repo_id).read()
+                    df_hf = P1atdevDanbooruJaTagPairAdapter(
+                        repo_id,
+                        language=hf_language,
+                        require_kana=repo_id in kana_only,
+                    ).read()
                 except Exception as e:
                     logger.warning(f"[Phase 1.5] Failed to load translations from {source_name}: {e}")
                     source_effects.append(
@@ -1998,7 +2010,7 @@ def build_dataset(
                         "action": "imported",
                         "rows_read": len(trans_rows),
                         "db_changes": int(conn.total_changes - changes_before),
-                        "note": "hf_ja_translation",
+                        "note": f"hf_{hf_language}_translation",
                     }
                 )
                 logger.info(f"[Phase 1.5] Imported translations: {source_name} (rows={len(trans_rows)})")
@@ -2418,6 +2430,21 @@ def main() -> None:
         help="Optional exclude list file (1 entry per line; supports glob patterns)",
     )
     parser.add_argument(
+        "--hf-zh-translation",
+        action="append",
+        default=None,
+        help="Hugging Face dataset repo_id for ZH translations (repeatable). Example: ame-la/danbooru-tags-data-zh",
+    )
+    parser.add_argument(
+        "--hf-ja-kana-only",
+        action="append",
+        default=None,
+        help=(
+            "repo_id (also given via --hf-ja-translation) whose JA translations are kept only when they "
+            "contain kana (for raw wiki other_names that mix in Traditional Chinese)."
+        ),
+    )
+    parser.add_argument(
         "--hf-ja-translation",
         action="append",
         default=None,
@@ -2457,6 +2484,8 @@ def main() -> None:
         include_sources_path=args.include_sources,
         exclude_sources_path=args.exclude_sources,
         hf_ja_translation_datasets=args.hf_ja_translation,
+        hf_zh_translation_datasets=args.hf_zh_translation,
+        hf_ja_kana_only_datasets=args.hf_ja_kana_only,
         parquet_output_dir=args.parquet_dir,
         base_db_path=args.base_db,
         overwrite=args.overwrite,
