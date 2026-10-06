@@ -27,6 +27,22 @@ sources:
     revision_tracking: commit_hash
     enabled: true
 
+  # MIT source: Danbooru wiki dump (2026-03). deepghs/site_tags と p1atdev の更新停止を補う。
+  # other_names は未フィルタ (中国語・韓国語等を含む) のため、文字種で ja/ko/zh に振り分けて取り込む
+  # (仮名→ja, ハングル→ko, 漢字のみ→zh, ラテン文字等→捨てる)。
+  - id: danbooru-wikis-2026
+    kind: hf_dataset
+    repo_id: lylogummy/danbooru_wikis_2026
+    url: https://huggingface.co/datasets/lylogummy/danbooru_wikis_2026
+    license: mit
+    applies_to: [mit]
+    data_type: translation_ja
+    hf_config:
+      use_datasets_api: true
+      classify_scripts: true
+    revision_tracking: hf_revision
+    enabled: true
+
   # CC-BY-4.0 source: deepghs/site_tags
   - id: site_tags
     kind: hf_dataset
@@ -37,6 +53,20 @@ sources:
     data_type: site_tags_sqlite
     paths_include:
       - "*/tags.sqlite"
+    revision_tracking: hf_revision
+    enabled: true
+
+  # zh translation (2026-10 更新継続中)。ライセンス記載なし (作者未確認) のため
+  # README には license: unspecified と表記される。
+  - id: danbooru-tags-data-zh
+    kind: hf_dataset
+    repo_id: ame-la/danbooru-tags-data-zh
+    url: https://huggingface.co/datasets/ame-la/danbooru-tags-data-zh
+    license: unspecified
+    applies_to: [cc0]
+    data_type: translation_zh
+    hf_config:
+      use_datasets_api: true
     revision_tracking: hf_revision
     enabled: true
 

@@ -34,6 +34,7 @@ from genai_tag_db_dataset_builder.core.database import (
 )
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
+from genai_tag_db_dataset_builder.core.scripts import SIMPLIFIED_ONLY_CHINESE_CHARS
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 
 logger = logging.getLogger(__name__)
@@ -736,12 +737,9 @@ def _delete_translations_missing_required_script(
 
 
 # Issue #1213: language='ja' に中国語 (簡体字) が混入する問題の検出用。
-# 日本語で使われない簡体字専用の文字集合。共有漢字 (国/学/体 等) は誤検出防止のため除外。
+# 簡体字専用の文字集合は core/scripts.py (SIMPLIFIED_ONLY_CHINESE_CHARS)。
 # _delete_translations_missing_required_script (漢字必須) は中国語も通してしまうため、
 # ja として保存された中国語をこの集合で検出し zh へ再分類する (LoRAIro #1213)。
-_SIMPLIFIED_ONLY_CHINESE_CHARS = frozenset(
-    "计订认讥议讨让训记讲许论讼访设证评识诉词译试诗诚话诞询该详语误说请诸诺读课谁调谈谊谜谢谣谱纠红纤约级纪纫纬纯纱纳纵纶纷纸纹纺线练组绅细织终绍经绑绒结绕绘给绚络绝绞统绢绣继绩绪续绮绯绳维绵综绽绿缀缎缓缔缘缚缝缠缩缨缤针钉钓钗钝钟钢钥钦钩钮钱钻铁铃铅铜铠银铸铺链销锁锄锋锐错锡锣锤锦键锯镇镖镜镰饥饭饮饰饱饲饵饼馆馒门闩闪闭问闯闰闲间闷闸闹闺闻阀阁阅阎阐马驭驮驯驰驱驳驴驶驹驻驼驾骂骄骑骏骗骚骤鸟鸡鸣鸦鸭鸯鸳鸽鹃鹅鹉鹊鹏鹦鹰贝贞负贡财责贤败货质贩贪贫贯贱贴贵贷贸费贺贼贾赁资赋赌赏赐赔赖赚赛赞赠页顶顷项顺须顽顾顿颁颂预颅领颇频颖颗题颜额颠颤车轧轨转轮软轴轻载轿辅辆辈辉辐输辖辗鱼鲁鲜鲤鲨鳞风飘龙庞长东乐书习乡买卖亚产见观觉规视览宽单头发师时电爱华举义乌亏无专丛丝两严丧个丰临为丽么亿仅从仑仓们价众优伙伞伟传伤伦伪侠侧侨俩俭债倾偿儿兰关兴养兽冈军农冯决况净凤凯击刘则刚创剑剧办动势协卫历厅压厌县变叹吓吕吗听启呜员响哑唤团园围图圆圣场坏块坚墙壶处备复够夹夺奋奖妆妇妈娇实宠审宫对寻导尔尘尝层岁岛帅带帮广庆库应庙废开异弃弹强归录忆忧怀态总恶悬惊惧惯愤愿懒戏战户扑执扩扫扬扰抚抢护报拟拥择挂挡挤挥损换显晓暂术杀杂权极构枪枫标树样检樱欢毁毕气汉汤沟泽洁浊测浑浓涂润涩渊满滚滨灭灵灾炼热爷牵犹狮狱猎环现疯疗瘦皱盐监盖盘码础确祸离种积稳穷窗竞笔笼签简粮紧罗罚羡联聪肃肠肤肾肿脏脑脸腾舰艳苏获萝萤营蓝蔷虑虽蜡补衬袜裤这边达迁过运还进远违连迟适选遗邮邻酱释鉴阶际陆隐难雏雾黑默齐齿"
-)
 
 
 def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
@@ -768,7 +766,7 @@ def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
 
     changes_before = conn.total_changes
     for translation_id, tag_id, text in rows:
-        if not text or not any(ch in _SIMPLIFIED_ONLY_CHINESE_CHARS for ch in str(text)):
+        if not text or not any(ch in SIMPLIFIED_ONLY_CHINESE_CHARS for ch in str(text)):
             continue
         dup = conn.execute(
             "SELECT 1 FROM TAG_TRANSLATIONS WHERE tag_id = ? AND language = 'zh' AND translation = ?",
@@ -1730,6 +1728,18 @@ def _export_danbooru_view_parquet(
         ORDER BY tag_id, translation_id
       )
       GROUP BY tag_id
+    ),
+    tr_ko AS (
+      SELECT tag_id,
+             group_concat(translation, '{sep}') AS lang_ko_str
+      FROM (
+        SELECT tag_id, translation
+        FROM TAG_TRANSLATIONS
+        WHERE language = 'ko'
+          AND tag_id BETWEEN {{lo}} AND {{hi}}
+        ORDER BY tag_id, translation_id
+      )
+      GROUP BY tag_id
     )
     SELECT
       t.tag_id AS tag_id,
@@ -1739,7 +1749,8 @@ def _export_danbooru_view_parquet(
       uc.count AS count,
       alias_rev.deprecated_tags_str AS deprecated_tags_str,
       tr_ja.lang_ja_str AS lang_ja_str,
-      tr_zh.lang_zh_str AS lang_zh_str
+      tr_zh.lang_zh_str AS lang_zh_str,
+      tr_ko.lang_ko_str AS lang_ko_str
     FROM canon
     JOIN TAGS t ON t.tag_id = canon.tag_id
     JOIN TAG_FORMATS f ON f.format_id = 1
@@ -1756,6 +1767,8 @@ def _export_danbooru_view_parquet(
       ON tr_ja.tag_id = t.tag_id
     LEFT JOIN tr_zh
       ON tr_zh.tag_id = t.tag_id
+    LEFT JOIN tr_ko
+      ON tr_ko.tag_id = t.tag_id
     ORDER BY t.tag_id
     """
 
@@ -1791,6 +1804,7 @@ def _export_danbooru_view_parquet(
                     "deprecated_tags_str": pl.Utf8,
                     "lang_ja_str": pl.Utf8,
                     "lang_zh_str": pl.Utf8,
+                    "lang_ko_str": pl.Utf8,
                 },
             )
         except Exception as e:
@@ -1813,8 +1827,9 @@ def _export_danbooru_view_parquet(
                 _split_list("deprecated_tags_str"),
                 _split_list("lang_ja_str"),
                 _split_list("lang_zh_str"),
+                _split_list("lang_ko_str"),
             ]
-        ).drop(["deprecated_tags_str", "lang_ja_str", "lang_zh_str"])
+        ).drop(["deprecated_tags_str", "lang_ja_str", "lang_zh_str", "lang_ko_str"])
 
         out_path = output_dir / f"danbooru-{shard:05d}.parquet"
         df.write_parquet(out_path, compression="zstd")
@@ -1833,6 +1848,8 @@ def build_dataset(
     include_sources_path: Path | str | None = None,
     exclude_sources_path: Path | str | None = None,
     hf_ja_translation_datasets: list[str] | None = None,
+    hf_zh_translation_datasets: list[str] | None = None,
+    hf_wiki_multilang_datasets: list[str] | None = None,
     parquet_output_dir: Path | str | None = None,
     base_db_path: Path | str | None = None,
     overwrite: bool = False,
@@ -1846,6 +1863,9 @@ def build_dataset(
         version: データセットバージョン（例: "v4.1.0"）
         report_dir: レポート出力先ディレクトリ（Noneの場合はレポート出力なし）
         hf_ja_translation_datasets: Hugging Face datasets から日本語翻訳を取り込む（例: p1atdev/danbooru-ja-tag-pair-20241015）
+        hf_zh_translation_datasets: Hugging Face datasets から中国語翻訳を取り込む（例: ame-la/danbooru-tags-data-zh）
+        hf_wiki_multilang_datasets: hf_ja_translation_datasets のうち、訳語を文字種で ja/ko/zh に振り分けて
+            取り込む repo_id（未フィルタの wiki other_names のように多言語が混在するソース向け）
         parquet_output_dir: Parquet出力先ディレクトリ（Noneの場合はParquet出力なし）
         base_db_path: ベースとなる既存SQLiteファイル（MIT版ビルド等で使用）。指定時はPhase 0/1をスキップ
         overwrite: 既存のoutput_pathを上書きするか
@@ -1951,16 +1971,23 @@ def build_dataset(
                 }
             )
 
-        # Phase 1.5: Hugging Face datasets から翻訳（日本語）を取り込む（任意）
-        if hf_ja_translation_datasets:
-            logger.info(
-                f"[Phase 1.5] Importing HF JA translations: {len(hf_ja_translation_datasets)} dataset(s)"
-            )
-            for repo_id in hf_ja_translation_datasets:
+        # Phase 1.5: Hugging Face datasets から翻訳（日本語/中国語）を取り込む（任意）
+        multilang = set(hf_wiki_multilang_datasets or [])
+        hf_translation_jobs: list[tuple[str, str]] = [
+            *((repo_id, "ja") for repo_id in hf_ja_translation_datasets or []),
+            *((repo_id, "zh") for repo_id in hf_zh_translation_datasets or []),
+        ]
+        if hf_translation_jobs:
+            logger.info(f"[Phase 1.5] Importing HF translations: {len(hf_translation_jobs)} dataset(s)")
+            for repo_id, hf_language in hf_translation_jobs:
                 source_name = f"hf://datasets/{repo_id}"
                 changes_before = conn.total_changes
                 try:
-                    df_hf = P1atdevDanbooruJaTagPairAdapter(repo_id).read()
+                    df_hf = P1atdevDanbooruJaTagPairAdapter(
+                        repo_id,
+                        language=hf_language,
+                        classify_scripts=repo_id in multilang,
+                    ).read()
                 except Exception as e:
                     logger.warning(f"[Phase 1.5] Failed to load translations from {source_name}: {e}")
                     source_effects.append(
@@ -1998,7 +2025,7 @@ def build_dataset(
                         "action": "imported",
                         "rows_read": len(trans_rows),
                         "db_changes": int(conn.total_changes - changes_before),
-                        "note": "hf_ja_translation",
+                        "note": f"hf_{hf_language}_translation",
                     }
                 )
                 logger.info(f"[Phase 1.5] Imported translations: {source_name} (rows={len(trans_rows)})")
@@ -2418,6 +2445,21 @@ def main() -> None:
         help="Optional exclude list file (1 entry per line; supports glob patterns)",
     )
     parser.add_argument(
+        "--hf-zh-translation",
+        action="append",
+        default=None,
+        help="Hugging Face dataset repo_id for ZH translations (repeatable). Example: ame-la/danbooru-tags-data-zh",
+    )
+    parser.add_argument(
+        "--hf-wiki-multilang",
+        action="append",
+        default=None,
+        help=(
+            "repo_id (also given via --hf-ja-translation) whose translations are split by script into "
+            "ja/ko/zh instead of all being labelled ja (for raw wiki other_names that mix languages)."
+        ),
+    )
+    parser.add_argument(
         "--hf-ja-translation",
         action="append",
         default=None,
@@ -2457,6 +2499,8 @@ def main() -> None:
         include_sources_path=args.include_sources,
         exclude_sources_path=args.exclude_sources,
         hf_ja_translation_datasets=args.hf_ja_translation,
+        hf_zh_translation_datasets=args.hf_zh_translation,
+        hf_wiki_multilang_datasets=args.hf_wiki_multilang,
         parquet_output_dir=args.parquet_dir,
         base_db_path=args.base_db,
         overwrite=args.overwrite,
