@@ -48,6 +48,19 @@ def _pick_column(cols: list[str], candidates: list[str]) -> str | None:
     return None
 
 
+def _load_split(repo_id_or_path: str, revision: str | None, split: str | None) -> Dataset:
+    """HF repo もしくはローカル保存済み dataset から 1 つの split を読み込む."""
+    if _is_local_dataset_path(repo_id_or_path):
+        ds_obj = load_from_disk(repo_id_or_path)
+        return _first_split(ds_obj) if isinstance(ds_obj, DatasetDict) else ds_obj
+    loaded = load_dataset(repo_id_or_path, revision=revision)
+    ds = _first_split(loaded)
+    if split:
+        # load_dataset で split 指定をしない場合に備えて明示切り替えも許可する
+        ds = loaded[split]
+    return ds
+
+
 _TRANSLATION_SPLIT_RE = re.compile("[,\uff0c\u3001\uff64\ufe50]")
 
 
@@ -105,15 +118,7 @@ class P1atdevDanbooruJaTagPairAdapter:
     classify_scripts: bool = False
 
     def read(self) -> pl.DataFrame:
-        if _is_local_dataset_path(self.repo_id_or_path):
-            ds_obj = load_from_disk(self.repo_id_or_path)
-            ds = _first_split(ds_obj) if isinstance(ds_obj, DatasetDict) else ds_obj
-        else:
-            loaded = load_dataset(self.repo_id_or_path, revision=self.revision)
-            ds = _first_split(loaded)
-            if self.split:
-                # load_dataset で split 指定をしない場合に備えて明示切り替えも許可する
-                ds = loaded[self.split]
+        ds = _load_split(self.repo_id_or_path, self.revision, self.split)
 
         cols = list(ds.column_names)
 
@@ -161,3 +166,51 @@ class P1atdevDanbooruJaTagPairAdapter:
         if not records:
             return pl.DataFrame({"source_tag": [], out_col: []})
         return pl.DataFrame(records).rename({"lang_value": out_col})
+
+
+# Danbooru の tag category (type_id) として受け付ける値。DB の TAG_TYPE_FORMAT_MAPPING (format_id=1) と一致。
+DANBOORU_TAG_CATEGORIES = frozenset({0, 1, 3, 4, 5})
+
+
+@dataclass(frozen=True)
+class DanbooruTagListAdapter:
+    """`tag, category, count` 列を持つ Danbooru タグ一覧 (例: ame-la/danbooru-tags-data-zh) を読む.
+
+    翻訳ではなくタグ本体 (TAGS / TAG_STATUS / TAG_USAGE_COUNTS) の作成に使う。
+    `aliases` 列は Danbooru の別名ではなく俗称・旧訳・原名の寄せ集めなので読まない。
+    """
+
+    repo_id_or_path: str
+    revision: str | None = None
+    split: str | None = None
+
+    def read(self) -> pl.DataFrame:
+        ds = _load_split(self.repo_id_or_path, self.revision, self.split)
+        cols = list(ds.column_names)
+        tag_col = _pick_column(cols, ["tag", "source_tag", "title"])
+        category_col = _pick_column(cols, ["category", "type", "type_id"])
+        count_col = _pick_column(cols, ["count", "post_count"])
+        if tag_col is None or category_col is None:
+            msg = f"Unsupported schema for {self.repo_id_or_path}: columns={cols}"
+            raise ValueError(msg)
+
+        records: list[dict[str, Any]] = []
+        for row in ds:
+            tag = str(row.get(tag_col) or "").strip()
+            if not tag:
+                continue
+            try:
+                category = int(row[category_col])
+            except (TypeError, ValueError):
+                continue
+            if category not in DANBOORU_TAG_CATEGORIES:
+                continue
+            raw_count = row.get(count_col) if count_col else None
+            try:
+                count = max(int(raw_count), 0) if raw_count is not None else 0
+            except (TypeError, ValueError):
+                count = 0
+            records.append({"source_tag": tag, "category": category, "count": count})
+
+        schema = {"source_tag": pl.Utf8, "category": pl.Int64, "count": pl.Int64}
+        return pl.DataFrame(records, schema=schema)

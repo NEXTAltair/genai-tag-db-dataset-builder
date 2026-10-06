@@ -56,17 +56,21 @@ sources:
     revision_tracking: hf_revision
     enabled: true
 
-  # zh translation (2026-10 更新継続中)。ライセンス記載なし (作者未確認) のため
-  # README には license: unspecified と表記される。
+  # MIT source: ame-la/danbooru-tags-data-zh (2026-08 時点の Danbooru タグ一覧 + 簡体字中国語訳)
+  # リポジトリの LICENSE は MIT (Copyright (c) 2026 amenorira)。MIT ビルドで取り込む。
+  # create_tags: DB に無い Danbooru タグ本体 (種別・件数) を作ってから翻訳を付ける。
+  # aliases 列は Danbooru の別名ではなく俗称・原名の寄せ集めなので使わない。
   - id: danbooru-tags-data-zh
     kind: hf_dataset
     repo_id: ame-la/danbooru-tags-data-zh
     url: https://huggingface.co/datasets/ame-la/danbooru-tags-data-zh
-    license: unspecified
-    applies_to: [cc0]
+    license: mit
+    copyright: "Copyright (c) 2026 amenorira"
+    applies_to: [mit]
     data_type: translation_zh
     hf_config:
       use_datasets_api: true
+      create_tags: true
     revision_tracking: hf_revision
     enabled: true
 

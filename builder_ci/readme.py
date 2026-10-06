@@ -137,14 +137,22 @@ Only sources with `db_changes > 0` are listed.
     if not affected:
         readme += "\n- (none)\n"
     else:
+        seen: set[str] = set()
         for row, src in affected:
             source_name = row.get("source", "")
             if src:
                 url = src.get("url") or src.get("repo_id", "")
                 license_name = src.get("license", "unknown")
-                readme += f"\n- {src.get('id')} ({license_name}) {url} ({source_name})"
+                line = f"- {src.get('id')} ({license_name}) {url} ({source_name})"
+                if src.get("copyright"):
+                    line += f" — {src['copyright']}"
             else:
-                readme += f"\n- {source_name}"
+                line = f"- {source_name}"
+            # 同じソースが複数の effect 行 (タグ作成・翻訳取り込みなど) を持つ場合は 1 行にまとめる
+            if line in seen:
+                continue
+            seen.add(line)
+            readme += f"\n{line}"
 
     readme += "\n\n## Notes\n\n- This dataset is intended for tag lookup, alias resolution, and translation workflows.\n"
     return readme

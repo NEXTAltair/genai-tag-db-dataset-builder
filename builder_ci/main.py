@@ -164,6 +164,14 @@ def _hf_zh_translation_datasets(sources: Iterable[dict]) -> list[str]:
     ]
 
 
+def _hf_danbooru_tag_list_datasets(sources: Iterable[dict]) -> list[str]:
+    return [
+        src["repo_id"]
+        for src in sources
+        if src.get("hf_config", {}).get("use_datasets_api") and src.get("hf_config", {}).get("create_tags")
+    ]
+
+
 def _hf_wiki_multilang_datasets(sources: Iterable[dict]) -> list[str]:
     return [
         src["repo_id"]
@@ -342,6 +350,7 @@ def _build_target(
     hf_ja_datasets = _hf_translation_datasets(sources)
     hf_zh_datasets = _hf_zh_translation_datasets(sources)
     hf_wiki_multilang = _hf_wiki_multilang_datasets(sources)
+    hf_danbooru_tag_lists = _hf_danbooru_tag_list_datasets(sources)
     # site_tags (CC-BY-4.0) はそのターゲットのソースに含まれる場合だけ取り込む。
     # external_sources のキャッシュに前回 CC4 ビルドの site_tags が残っていても
     # CC0/MIT ビルドへ混入させない。
@@ -399,6 +408,7 @@ def _build_target(
         hf_zh_translation_datasets=hf_zh_datasets,
         hf_wiki_multilang_datasets=hf_wiki_multilang,
         enable_site_tags=enable_site_tags,
+        hf_danbooru_tag_list_datasets=hf_danbooru_tag_lists,
         parquet_output_dir=target.parquet_dir,
         base_db_path=base_db_path,
         overwrite=True,

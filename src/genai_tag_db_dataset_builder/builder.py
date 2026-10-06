@@ -19,7 +19,10 @@ from pathlib import Path
 
 import polars as pl
 
-from genai_tag_db_dataset_builder.adapters.hf_translation_adapter import P1atdevDanbooruJaTagPairAdapter
+from genai_tag_db_dataset_builder.adapters.hf_translation_adapter import (
+    DanbooruTagListAdapter,
+    P1atdevDanbooruJaTagPairAdapter,
+)
 from genai_tag_db_dataset_builder.adapters.site_tags_adapter import SiteTagsAdapter
 from genai_tag_db_dataset_builder.core.alias_resolution import (
     AliasConflict,
@@ -34,6 +37,7 @@ from genai_tag_db_dataset_builder.core.database import (
 )
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
+from genai_tag_db_dataset_builder.core.normalize import canonicalize_source_tag
 from genai_tag_db_dataset_builder.core.scripts import SIMPLIFIED_ONLY_CHINESE_CHARS
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 
@@ -408,6 +412,82 @@ def _insert_tags(conn: sqlite3.Connection, tags_df: pl.DataFrame) -> None:
             "INSERT INTO TAGS (tag_id, source_tag, tag) VALUES (?, ?, ?)",
             chunk,
         )
+
+
+@dataclass(frozen=True)
+class _DanbooruTagCreation:
+    tags_created: int
+    status_created: int
+    usage_counts_created: int
+    next_tag_id: int
+
+
+_DANBOORU_FORMAT_ID = 1
+
+
+def _create_danbooru_tags_from_list(
+    conn: sqlite3.Connection,
+    tag_list: pl.DataFrame,
+    *,
+    existing_tags: set[str],
+    tags_mapping: dict[str, int],
+    next_tag_id: int,
+) -> _DanbooruTagCreation:
+    """Danbooru タグ一覧 (source_tag, category, count) から、DB に無いタグ本体を作る.
+
+    - TAGS に無いタグは新規作成する
+    - Danbooru (format_id=1) の TAG_STATUS が無いタグには、category を type_id として登録する
+      (alias=0 / preferred は自分自身)
+    - 新規に TAG_STATUS を作ったタグだけ TAG_USAGE_COUNTS を入れる
+    - 既に Danbooru の TAG_STATUS があるタグ (alias を含む) は一切変更しない
+      → 既存の type / alias 関係 / 件数を上書きしない
+    """
+    if tag_list.is_empty():
+        return _DanbooruTagCreation(0, 0, 0, next_tag_id)
+
+    tags_created = 0
+    new_tags_df = merge_tags(existing_tags, tag_list.select("source_tag"), next_tag_id)
+    if len(new_tags_df) > 0:
+        for chunk in _chunked(
+            list(
+                zip(
+                    new_tags_df["tag_id"].to_list(),
+                    new_tags_df["source_tag"].to_list(),
+                    new_tags_df["tag"].to_list(),
+                    strict=True,
+                )
+            ),
+            10_000,
+        ):
+            conn.executemany("INSERT INTO TAGS (tag_id, source_tag, tag) VALUES (?, ?, ?)", chunk)
+        tags_mapping.update(
+            dict(zip(new_tags_df["tag"].to_list(), new_tags_df["tag_id"].to_list(), strict=True))
+        )
+        existing_tags.update(new_tags_df["tag"].to_list())
+        tags_created = len(new_tags_df)
+        next_tag_id = int(new_tags_df["tag_id"].max()) + 1  # type: ignore[arg-type]
+
+    status_created = 0
+    counts_created = 0
+    for row in tag_list.to_dicts():
+        tag_id = tags_mapping.get(normalize_tag(canonicalize_source_tag(row["source_tag"])))
+        if tag_id is None:
+            continue
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id) "
+            "VALUES (?, ?, ?, 0, ?)",
+            (tag_id, _DANBOORU_FORMAT_ID, int(row["category"]), tag_id),
+        )
+        if cur.rowcount != 1:
+            continue
+        status_created += 1
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO TAG_USAGE_COUNTS (tag_id, format_id, count) VALUES (?, ?, ?)",
+            (tag_id, _DANBOORU_FORMAT_ID, int(row["count"])),
+        )
+        counts_created += max(cur.rowcount, 0)
+    conn.commit()
+    return _DanbooruTagCreation(tags_created, status_created, counts_created, next_tag_id)
 
 
 def _insert_tag_status_rows(
@@ -1856,6 +1936,7 @@ def build_dataset(
     hf_zh_translation_datasets: list[str] | None = None,
     hf_wiki_multilang_datasets: list[str] | None = None,
     enable_site_tags: bool = True,
+    hf_danbooru_tag_list_datasets: list[str] | None = None,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
 
@@ -1866,6 +1947,9 @@ def build_dataset(
         report_dir: レポート出力先ディレクトリ（Noneの場合はレポート出力なし）
         hf_ja_translation_datasets: Hugging Face datasets から日本語翻訳を取り込む（例: p1atdev/danbooru-ja-tag-pair-20241015）
         hf_zh_translation_datasets: Hugging Face datasets から中国語翻訳を取り込む（例: ame-la/danbooru-tags-data-zh）
+        hf_danbooru_tag_list_datasets: (tag, category, count) を持つ Danbooru タグ一覧 (例: ame-la/danbooru-tags-data-zh)。
+            DB に無いタグ本体 (TAGS / Danbooru の TAG_STATUS / 件数) を作ってから翻訳を取り込む。
+            hf_zh_translation_datasets / hf_ja_translation_datasets にも含めた repo_id のみ有効
         enable_site_tags: False の場合 deepghs/site_tags (CC-BY-4.0) を取り込まない。
             external_sources/site_tags が残っていても無視する（CC0/MIT ビルドへの混入防止）
         hf_wiki_multilang_datasets: hf_ja_translation_datasets のうち、訳語を文字種で ja/ko/zh に振り分けて
@@ -1983,9 +2067,54 @@ def build_dataset(
         ]
         if hf_translation_jobs:
             logger.info(f"[Phase 1.5] Importing HF translations: {len(hf_translation_jobs)} dataset(s)")
+            tag_list_repos = set(hf_danbooru_tag_list_datasets or [])
             for repo_id, hf_language in hf_translation_jobs:
                 source_name = f"hf://datasets/{repo_id}"
                 changes_before = conn.total_changes
+                if repo_id in tag_list_repos:
+                    # 翻訳を付ける前にタグ本体を作る (新しいタグにも翻訳が付くように)
+                    tag_list_df: pl.DataFrame | None = None
+                    try:
+                        tag_list_df = DanbooruTagListAdapter(repo_id).read()
+                    except Exception as e:
+                        logger.warning(f"[Phase 1.5] Failed to load tag list from {source_name}: {e}")
+                        source_effects.append(
+                            {
+                                "source": source_name,
+                                "action": "read_failed",
+                                "rows_read": 0,
+                                "db_changes": 0,
+                                "note": f"tag_list: {e}",
+                            }
+                        )
+                    if tag_list_df is not None:
+                        tag_changes_before = conn.total_changes
+                        created = _create_danbooru_tags_from_list(
+                            conn,
+                            tag_list_df,
+                            existing_tags=existing_tags,
+                            tags_mapping=tags_mapping,
+                            next_tag_id=next_tag_id,
+                        )
+                        next_tag_id = created.next_tag_id
+                        source_effects.append(
+                            {
+                                "source": source_name,
+                                "action": "tags_created",
+                                "rows_read": len(tag_list_df),
+                                "db_changes": int(conn.total_changes - tag_changes_before),
+                                "note": (
+                                    f"danbooru_tag_list tags={created.tags_created} "
+                                    f"status={created.status_created} counts={created.usage_counts_created}"
+                                ),
+                            }
+                        )
+                        logger.info(
+                            f"[Phase 1.5] Created Danbooru tags from {source_name}: "
+                            f"tags={created.tags_created}, status={created.status_created}, "
+                            f"counts={created.usage_counts_created}"
+                        )
+                    changes_before = conn.total_changes
                 try:
                     df_hf = P1atdevDanbooruJaTagPairAdapter(
                         repo_id,
@@ -2451,6 +2580,15 @@ def main() -> None:
         help="Optional exclude list file (1 entry per line; supports glob patterns)",
     )
     parser.add_argument(
+        "--hf-danbooru-tag-list",
+        action="append",
+        default=None,
+        help=(
+            "repo_id (also given via --hf-zh-translation or --hf-ja-translation) that has "
+            "tag/category/count columns: create missing Danbooru tags from it before importing translations."
+        ),
+    )
+    parser.add_argument(
         "--no-site-tags",
         action="store_true",
         help="Do not import deepghs/site_tags (CC-BY-4.0), even if external_sources/site_tags exists.",
@@ -2513,6 +2651,7 @@ def main() -> None:
         hf_zh_translation_datasets=args.hf_zh_translation,
         hf_wiki_multilang_datasets=args.hf_wiki_multilang,
         enable_site_tags=not args.no_site_tags,
+        hf_danbooru_tag_list_datasets=args.hf_danbooru_tag_list,
         parquet_output_dir=args.parquet_dir,
         base_db_path=args.base_db,
         overwrite=args.overwrite,
