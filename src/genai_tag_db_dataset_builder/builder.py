@@ -1850,6 +1850,7 @@ def build_dataset(
     hf_ja_translation_datasets: list[str] | None = None,
     hf_zh_translation_datasets: list[str] | None = None,
     hf_wiki_multilang_datasets: list[str] | None = None,
+    enable_site_tags: bool = True,
     parquet_output_dir: Path | str | None = None,
     base_db_path: Path | str | None = None,
     overwrite: bool = False,
@@ -1864,6 +1865,8 @@ def build_dataset(
         report_dir: レポート出力先ディレクトリ（Noneの場合はレポート出力なし）
         hf_ja_translation_datasets: Hugging Face datasets から日本語翻訳を取り込む（例: p1atdev/danbooru-ja-tag-pair-20241015）
         hf_zh_translation_datasets: Hugging Face datasets から中国語翻訳を取り込む（例: ame-la/danbooru-tags-data-zh）
+        enable_site_tags: False の場合 deepghs/site_tags (CC-BY-4.0) を取り込まない。
+            external_sources/site_tags が残っていても無視する（CC0/MIT ビルドへの混入防止）
         hf_wiki_multilang_datasets: hf_ja_translation_datasets のうち、訳語を文字種で ja/ko/zh に振り分けて
             取り込む repo_id（未フィルタの wiki other_names のように多言語が混在するソース向け）
         parquet_output_dir: Parquet出力先ディレクトリ（Noneの場合はParquet出力なし）
@@ -2032,7 +2035,9 @@ def build_dataset(
 
         # Phase 2: deepghs/site_tags (CC-BY-4.0) 統合
         site_tags_root = sources_dir / "external_sources" / "site_tags"
-        if site_tags_root.exists() and site_tags_root.is_dir():
+        if not enable_site_tags:
+            logger.info("[Phase 2] Skipped site_tags (enable_site_tags=False)")
+        elif site_tags_root.exists() and site_tags_root.is_dir():
             sqlite_files = sorted(site_tags_root.glob("*/tags.sqlite"))
             if sqlite_files:
                 logger.info(
@@ -2445,6 +2450,11 @@ def main() -> None:
         help="Optional exclude list file (1 entry per line; supports glob patterns)",
     )
     parser.add_argument(
+        "--no-site-tags",
+        action="store_true",
+        help="Do not import deepghs/site_tags (CC-BY-4.0), even if external_sources/site_tags exists.",
+    )
+    parser.add_argument(
         "--hf-zh-translation",
         action="append",
         default=None,
@@ -2501,6 +2511,7 @@ def main() -> None:
         hf_ja_translation_datasets=args.hf_ja_translation,
         hf_zh_translation_datasets=args.hf_zh_translation,
         hf_wiki_multilang_datasets=args.hf_wiki_multilang,
+        enable_site_tags=not args.no_site_tags,
         parquet_output_dir=args.parquet_dir,
         base_db_path=args.base_db,
         overwrite=args.overwrite,

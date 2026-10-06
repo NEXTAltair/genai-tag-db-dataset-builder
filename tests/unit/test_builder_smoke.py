@@ -74,3 +74,29 @@ def test_builder_imports_site_tags(tmp_path: Path) -> None:
         assert sorted(row[0] for row in translations) == ["まじょ", "魔女"]
     finally:
         conn.close()
+
+
+def test_builder_skips_site_tags_when_disabled(tmp_path: Path) -> None:
+    """external_sources/site_tags が残っていても enable_site_tags=False なら取り込まない (CC0/MIT 混入防止)."""
+    sources_dir = tmp_path / "sources"
+    sqlite_path = sources_dir / "external_sources" / "site_tags" / "anime-pictures.net" / "tags.sqlite"
+    _create_site_tags_sqlite(sqlite_path)
+
+    output_db = tmp_path / "out.db"
+
+    build_dataset(
+        output_path=output_db,
+        sources_dir=sources_dir,
+        version="test",
+        report_dir=tmp_path / "reports",
+        overwrite=True,
+        enable_site_tags=False,
+    )
+
+    conn = sqlite3.connect(output_db)
+    try:
+        tags = {row[0] for row in conn.execute("SELECT tag FROM TAGS").fetchall()}
+        assert "witch" not in tags
+        assert "sorceress" not in tags
+    finally:
+        conn.close()

@@ -335,6 +335,10 @@ def _build_target(
     hf_ja_datasets = _hf_translation_datasets(sources)
     hf_zh_datasets = _hf_zh_translation_datasets(sources)
     hf_wiki_multilang = _hf_wiki_multilang_datasets(sources)
+    # site_tags (CC-BY-4.0) はそのターゲットのソースに含まれる場合だけ取り込む。
+    # external_sources のキャッシュに前回 CC4 ビルドの site_tags が残っていても
+    # CC0/MIT ビルドへ混入させない。
+    enable_site_tags = any(src.get("data_type") == "site_tags_sqlite" for src in sources)
 
     override_hash = compute_override_hash(override_path)
 
@@ -387,6 +391,7 @@ def _build_target(
         hf_ja_translation_datasets=hf_ja_datasets,
         hf_zh_translation_datasets=hf_zh_datasets,
         hf_wiki_multilang_datasets=hf_wiki_multilang,
+        enable_site_tags=enable_site_tags,
         parquet_output_dir=target.parquet_dir,
         base_db_path=base_db_path,
         overwrite=True,
