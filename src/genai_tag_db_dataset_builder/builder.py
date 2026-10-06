@@ -2483,7 +2483,7 @@ def main() -> None:
         exclude_sources_path=args.exclude_sources,
         hf_ja_translation_datasets=args.hf_ja_translation,
         hf_zh_translation_datasets=args.hf_zh_translation,
-        hf_wiki_multilang_datasets=args.hf_ja_multilang,
+        hf_wiki_multilang_datasets=args.hf_wiki_multilang,
         parquet_output_dir=args.parquet_dir,
         base_db_path=args.base_db,
         overwrite=args.overwrite,
