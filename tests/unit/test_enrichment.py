@@ -149,6 +149,39 @@ def test_late_conflict_rolls_back_tags_and_translations(conn: sqlite3.Connection
     assert conn.execute("SELECT COUNT(*) FROM TAG_CATEGORY_MEMBERSHIPS").fetchone()[0] == 0
 
 
+def test_disk_off_journal_is_switched_before_rollback(tmp_path: Path) -> None:
+    connection = sqlite3.connect(tmp_path / "off.sqlite")
+    try:
+        for statement in (*SCHEMA_SQL, *SCHEMA):
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO TAG_CATEGORIES VALUES ('root','other',NULL,'Other',1,'[\"Other\"]')"
+        )
+        connection.commit()
+        connection.execute("PRAGMA journal_mode=OFF")
+        with pytest.raises(ValueError, match="conflicts"):
+            apply_enrichment(connection, make_bundle(tmp_path))
+        assert connection.execute("SELECT COUNT(*) FROM TAGS").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM TAG_TRANSLATIONS").fetchone()[0] == 0
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "memory"
+    finally:
+        connection.close()
+
+
+def test_off_journal_with_pending_transaction_rejected(tmp_path: Path) -> None:
+    connection = sqlite3.connect(tmp_path / "pending.sqlite")
+    try:
+        for statement in SCHEMA_SQL:
+            connection.execute(statement)
+        connection.execute("PRAGMA journal_mode=OFF")
+        connection.execute("INSERT INTO TAGS(source_tag,tag) VALUES ('old','old')")
+        with pytest.raises(ValueError, match="rollback journal"):
+            apply_enrichment(connection, make_bundle(tmp_path))
+        assert connection.execute("SELECT tag FROM TAGS").fetchall() == [("old",)]
+    finally:
+        connection.close()
+
+
 def test_checked_in_bundle_validates() -> None:
     path = Path(__file__).resolve().parents[2] / "data" / "tag_table_bundle.json"
     bundle, digest = load_bundle(path)

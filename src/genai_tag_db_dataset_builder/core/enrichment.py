@@ -160,6 +160,10 @@ def apply_enrichment(
     """
     bundle, digest = load_bundle(bundle_path)
     result = EnrichmentResult(bundle.bundle_id, digest, len(bundle.tags))
+    if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "off":
+        if conn.in_transaction:
+            raise ValueError("enrichment requires a rollback journal; commit before switching OFF mode")
+        conn.execute("PRAGMA journal_mode=MEMORY")
     before = conn.total_changes
     conn.execute("SAVEPOINT tag_table_enrichment")
     try:
