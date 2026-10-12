@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from genai_tag_db_dataset_builder.core.normalize import normalize_tag
+from genai_tag_db_dataset_builder.core.translation_text import split_translation_text
 
 
 class _Record(BaseModel):
@@ -203,7 +204,9 @@ def apply_enrichment(
                 AND trim(t.translation) != '' LIMIT 1""",
                 (tag_id,),
             ).fetchone()
-            translations = sorted({text.strip() for text in row.translations if text.strip()})
+            translations = sorted(
+                {part for text in row.translations for part in split_translation_text(text)}
+            )
             if has_ja or alias_ja:
                 result.translation_notes.append(
                     {"tag": row.tag, "reason": "existing_ja" if has_ja else "alias_target_ja"}

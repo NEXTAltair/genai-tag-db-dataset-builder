@@ -40,6 +40,7 @@ from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
 from genai_tag_db_dataset_builder.core.normalize import canonicalize_source_tag
 from genai_tag_db_dataset_builder.core.scripts import SIMPLIFIED_ONLY_CHINESE_CHARS
+from genai_tag_db_dataset_builder.core.translation_text import split_translation_text
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 
 logger = logging.getLogger(__name__)
@@ -88,19 +89,6 @@ def _extract_all_tags_from_deprecated(df: pl.DataFrame) -> set[str]:
                         tags.append(t)
 
     return set(tags)
-
-
-def _clean_translation_part(text: str) -> str:
-    return text.strip().strip(" \"'\u201c\u201d\u2018\u2019\u300c\u300d")
-
-
-_TRANSLATION_SPLIT_RE = re.compile("[,\uff0c\u3001\uff64\ufe50]")
-
-
-def _split_translation_text(text: str) -> list[str]:
-    parts = [p.strip() for p in _TRANSLATION_SPLIT_RE.split(text)]
-    cleaned = [_clean_translation_part(p) for p in parts]
-    return [p for p in cleaned if p]
 
 
 def _extract_translations(
@@ -226,7 +214,7 @@ def _split_translation_values(value: object) -> list[str]:
     text = str(value).strip()
     if not text:
         return []
-    return _split_translation_text(text)
+    return split_translation_text(text)
 
 
 def _normalize_language_value(value: str) -> str:

@@ -218,3 +218,28 @@ def test_builder_applies_bundle_to_base_copy(tmp_path: Path) -> None:
         assert check.execute("SELECT COUNT(*) FROM TAG_CATEGORY_MEMBERSHIPS").fetchone()[0] == 2
         assert check.execute("PRAGMA foreign_key_check").fetchall() == []
     check.close()
+
+
+def test_repeated_build_keeps_split_translations(tmp_path: Path) -> None:
+    bundle_path = make_bundle(tmp_path)
+    data = json.loads(bundle_path.read_text(encoding="utf-8"))
+    data["tags"][1]["translations"] = ["黒、白"]
+    bundle_path.write_text(json.dumps(data), encoding="utf-8")
+    first, second = tmp_path / "first.sqlite", tmp_path / "second.sqlite"
+    build_dataset(first, tmp_path, "one", tag_table_bundles=[bundle_path], enable_site_tags=False)
+    build_dataset(
+        second, tmp_path, "two", base_db_path=first, tag_table_bundles=[bundle_path], enable_site_tags=False
+    )
+    translations = []
+    for path in (first, second):
+        connection = sqlite3.connect(path)
+        try:
+            translations.append(
+                connection.execute(
+                    "SELECT tag_id,language,translation FROM TAG_TRANSLATIONS ORDER BY tag_id,language,translation"
+                ).fetchall()
+            )
+        finally:
+            connection.close()
+    assert translations[0] == translations[1]
+    assert {row[2] for row in translations[0] if row[0] == 1} == {"黒", "白"}
