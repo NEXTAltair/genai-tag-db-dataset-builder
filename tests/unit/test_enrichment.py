@@ -190,6 +190,17 @@ def test_checked_in_bundle_validates() -> None:
     assert len(digest) == 64
 
 
+@pytest.mark.parametrize("tag", ["tag:+1", r"\(tag:-1\)", "tag:-.5", "tag\tname", "tag\x7fname"])
+def test_direct_bundle_rejects_weights_and_controls(tmp_path: Path, tag: str) -> None:
+    path = make_bundle(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["tags"][0]["tag"] = tag
+    data["assignments"][0]["tag"] = tag
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="canonical single tag"):
+        load_bundle(path)
+
+
 def test_builder_rejects_same_base_and_output(tmp_path: Path) -> None:
     path = tmp_path / "base.sqlite"
     path.write_bytes(b"must remain intact")

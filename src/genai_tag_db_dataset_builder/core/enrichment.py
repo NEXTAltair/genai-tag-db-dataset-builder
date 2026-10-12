@@ -37,10 +37,11 @@ def _single_tag(value: str) -> str:
         not value
         or len(value) > 90
         or not value.isascii()
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
         or any(char in value for char in ",\n\r[]{}<>#")
         or "((" in value
         or "))" in value
-        or re.search(r":\s*[\d.]", value)
+        or re.search(r":\s*[-+]?(?:\d|\.\d)", value)
         or normalize_tag(value) != value
     ):
         raise ValueError("expected a canonical single tag, without prompt syntax")

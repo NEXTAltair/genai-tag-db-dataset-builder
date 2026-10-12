@@ -48,7 +48,7 @@ class TagTableBundle(TypedDict):
     assignments: list[BundleAssignment]
 
 
-_PROMPT_SYNTAX = re.compile(r"[,\[\]{}<>]|:\s*[-+]?\d|\(\(|\)\)")
+_PROMPT_SYNTAX = re.compile(r"[,\[\]{}<>]|:\s*[-+]?(?:\d|\.\d)|\(\(|\)\)")
 
 
 def _text(value: Any, context: str) -> str:
