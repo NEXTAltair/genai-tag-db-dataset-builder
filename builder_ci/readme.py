@@ -48,6 +48,8 @@ def _read_source_effects(report_dir: Path) -> list[dict]:
 
 
 def _match_source(source_name: str, sources: list[dict]) -> dict | None:
+    if source_name.startswith("local://"):
+        return next((src for src in sources if src.get("id") == source_name[len("local://") :]), None)
     if source_name.startswith("external_sources/"):
         parts = Path(source_name).parts
         if len(parts) > 1:

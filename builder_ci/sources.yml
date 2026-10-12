@@ -2,6 +2,14 @@
 # Define source URLs, licenses, build targets, and file selection rules.
 
 sources:
+  - id: legacy-tag-table
+    kind: local_bundle
+    path: data/tag_table_bundle.json
+    license: cc0-1.0
+    applies_to: [cc0]
+    data_type: tag_table_enrichment
+    enabled: true
+
   # CC0 source: p1atdev/danbooru-ja-tag-pair
   - id: p1atdev-danbooru-ja-tag-pair
     kind: hf_dataset

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import os
 import shutil
 import subprocess
@@ -86,6 +87,14 @@ def _fetch_sources(sources: list[dict], external_dir: Path, force: bool = False)
             meta = fetch_github_repo(src, dest, force=force)
         elif src["kind"] == "hf_dataset":
             meta = fetch_hf_dataset(src, dest, force=force)
+        elif src["kind"] == "local_bundle":
+            bundle_path = _local_bundle_path(src)
+            meta = {
+                "id": src["id"],
+                "kind": "local_bundle",
+                "path": src["path"],
+                "revision": hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+            }
         else:
             logger.warning(f"Unknown source kind: {src.get('kind')} ({src.get('id')})")
             continue
@@ -93,6 +102,16 @@ def _fetch_sources(sources: list[dict], external_dir: Path, force: bool = False)
         meta["data_type"] = src.get("data_type")
         results.append(meta)
     return results
+
+
+def _local_bundle_path(source: dict) -> Path:
+    root = _repo_root().resolve()
+    path = (root / source["path"]).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("local bundle must be inside the builder repository")
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return path
 
 
 def _generate_include_filter(
@@ -103,6 +122,8 @@ def _generate_include_filter(
 ) -> Path:
     lines: list[str] = []
     for src in sources:
+        if src.get("kind") == "local_bundle":
+            continue
         if src.get("hf_config", {}).get("use_datasets_api"):
             continue
         for pattern in src.get("paths_include", []):
@@ -413,6 +434,7 @@ def _build_target(
         base_db_path=base_db_path,
         overwrite=True,
         alias_resolution=alias_resolution,
+        tag_table_bundles=[_local_bundle_path(src) for src in sources if src.get("kind") == "local_bundle"],
     )
 
     summary_path = run_health_checks(target.output_db, target.report_dir / "db_health")
