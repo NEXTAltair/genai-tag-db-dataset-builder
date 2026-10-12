@@ -167,7 +167,12 @@ def _read_categories(review_dir: Path) -> list[BundleCategory]:
             if category_id in categories and categories[category_id] != category:
                 raise ValueError(f"Conflicting category {category_id!r}")
             categories[category_id] = category
+    category_paths: set[tuple[str, tuple[str, ...]]] = set()
     for category in categories.values():
+        path_key = (category["namespace"], tuple(category["path"]))
+        if path_key in category_paths:
+            raise ValueError("Duplicate category path")
+        category_paths.add(path_key)
         parent_id = category["parent_id"]
         if parent_id is None:
             if category["depth"] != 1:

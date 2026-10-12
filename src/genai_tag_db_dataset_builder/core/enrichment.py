@@ -56,6 +56,16 @@ class TagRecord(_Record):
 
     _canonical_tag = field_validator("tag")(_single_tag)
 
+    @model_validator(mode="after")
+    def source_matches_tag(self) -> TagRecord:
+        if not self.source_tag.isascii() or any(
+            ord(char) < 32 or ord(char) == 127 for char in self.source_tag
+        ):
+            raise ValueError("source_tag must be a single ASCII tag")
+        if _single_tag(normalize_tag(self.source_tag)) != self.tag:
+            raise ValueError("source_tag must normalize to tag")
+        return self
+
 
 class CategoryRecord(_Record):
     category_id: str = Field(min_length=1)

@@ -249,6 +249,26 @@ def test_broken_category_parent_is_rejected(tmp_path: Path) -> None:
         build_bundle(review)
 
 
+def test_duplicate_category_path_is_rejected(tmp_path: Path) -> None:
+    category = {
+        "namespace": "generator",
+        "parent_id": "",
+        "label": "身体",
+        "depth": 1,
+        "path": json.dumps(["身体"], ensure_ascii=False),
+    }
+    review = _write_review(
+        tmp_path,
+        [_candidate("long hair")],
+        categories=[
+            {**category, "category_id": "first"},
+            {**category, "category_id": "second"},
+        ],
+    )
+    with pytest.raises(ValueError, match="Duplicate category path"):
+        build_bundle(review)
+
+
 def test_export_bytes_are_stable_after_input_order_changes(tmp_path: Path) -> None:
     first = _candidate("Long_Hair", row=3, translations=["長い髪", "ロングヘア"])
     second = _candidate("long hair", row=2)
