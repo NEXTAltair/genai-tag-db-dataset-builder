@@ -25,6 +25,8 @@ def test_main_passes_hf_translation_options(monkeypatch: pytest.MonkeyPatch, tmp
             "owner/wiki",
             "--hf-zh-translation",
             "owner/zh",
+            "--tag-table-bundle",
+            str(tmp_path / "bundle.json"),
         ],
     )
 
@@ -33,3 +35,4 @@ def test_main_passes_hf_translation_options(monkeypatch: pytest.MonkeyPatch, tmp
     assert captured["hf_ja_translation_datasets"] == ["owner/wiki"]
     assert captured["hf_wiki_multilang_datasets"] == ["owner/wiki"]
     assert captured["hf_zh_translation_datasets"] == ["owner/zh"]
+    assert captured["tag_table_bundles"] == [tmp_path / "bundle.json"]

@@ -35,10 +35,12 @@ from genai_tag_db_dataset_builder.core.database import (
     create_database,
     optimize_database,
 )
+from genai_tag_db_dataset_builder.core.enrichment import apply_enrichment, load_bundle
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
 from genai_tag_db_dataset_builder.core.normalize import canonicalize_source_tag
 from genai_tag_db_dataset_builder.core.scripts import SIMPLIFIED_ONLY_CHINESE_CHARS
+from genai_tag_db_dataset_builder.core.translation_text import split_translation_text
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 
 logger = logging.getLogger(__name__)
@@ -87,19 +89,6 @@ def _extract_all_tags_from_deprecated(df: pl.DataFrame) -> set[str]:
                         tags.append(t)
 
     return set(tags)
-
-
-def _clean_translation_part(text: str) -> str:
-    return text.strip().strip(" \"'\u201c\u201d\u2018\u2019\u300c\u300d")
-
-
-_TRANSLATION_SPLIT_RE = re.compile("[,\uff0c\u3001\uff64\ufe50]")
-
-
-def _split_translation_text(text: str) -> list[str]:
-    parts = [p.strip() for p in _TRANSLATION_SPLIT_RE.split(text)]
-    cleaned = [_clean_translation_part(p) for p in parts]
-    return [p for p in cleaned if p]
 
 
 def _extract_translations(
@@ -225,7 +214,7 @@ def _split_translation_values(value: object) -> list[str]:
     text = str(value).strip()
     if not text:
         return []
-    return _split_translation_text(text)
+    return split_translation_text(text)
 
 
 def _normalize_language_value(value: str) -> str:
@@ -1937,6 +1926,7 @@ def build_dataset(
     hf_wiki_multilang_datasets: list[str] | None = None,
     enable_site_tags: bool = True,
     hf_danbooru_tag_list_datasets: list[str] | None = None,
+    tag_table_bundles: list[Path] | None = None,
 ) -> None:
     """データセットをビルドして配布用DBを生成.
 
@@ -1965,10 +1955,14 @@ def build_dataset(
     """
     output_path = Path(output_path)
     sources_dir = Path(sources_dir)
+    for bundle_path in tag_table_bundles or []:
+        load_bundle(bundle_path)
 
     # base_db_path が指定されている場合はチェック
     if base_db_path:
         base_db_path = Path(base_db_path)
+        if base_db_path.resolve() == output_path.resolve():
+            raise ValueError("Base DB and output DB must be different paths")
         if not base_db_path.exists():
             msg = f"Base DB not found: {base_db_path}"
             raise FileNotFoundError(msg)
@@ -2495,6 +2489,20 @@ def build_dataset(
             _write_non_e621_prefix_repairs_tsv(report_dir_path, prefix_repairs)
             _write_prefix_tag_renames_tsv(report_dir_path, prefix_renames)
 
+        # Legacy sheets enrich the final canonical tags, after normal source repair.
+        for bundle_path in tag_table_bundles or []:
+            result = apply_enrichment(conn, bundle_path, report_dir_path)
+            conn.commit()
+            source_effects.append(
+                {
+                    "source": f"local://{result.bundle_id}",
+                    "action": "imported",
+                    "rows_read": result.input_tags,
+                    "db_changes": result.db_changes,
+                    "note": "tag_table_enrichment",
+                }
+            )
+
         # Phase 3: インデックス作成
         logger.info("[Phase 3] Creating indexes")
         conn.close()
@@ -2637,6 +2645,13 @@ def main() -> None:
         action="store_true",
         help="Overwrite output database if it already exists",
     )
+    parser.add_argument(
+        "--tag-table-bundle",
+        type=Path,
+        action="append",
+        default=None,
+        help="Portable single-tag/translation/search-category JSON bundle (repeatable)",
+    )
 
     args = parser.parse_args()
 
@@ -2655,6 +2670,7 @@ def main() -> None:
         parquet_output_dir=args.parquet_dir,
         base_db_path=args.base_db,
         overwrite=args.overwrite,
+        tag_table_bundles=args.tag_table_bundle,
     )
 
 

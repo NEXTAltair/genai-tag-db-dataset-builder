@@ -11,14 +11,14 @@ CSV/JSON/Parquet等の表形式入力において、`tag` 列が
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 import polars as pl
 
 from genai_tag_db_dataset_builder.core.normalize import normalize_tag
 
 
-class TagColumnType(str, Enum):
+class TagColumnType(StrEnum):
     """tag列の意味の推定結果."""
 
     NORMALIZED = "normalized"  # 既に正規化済み（TAGS.tag 相当）
