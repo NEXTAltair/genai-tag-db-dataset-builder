@@ -14,6 +14,9 @@ from pathlib import Path
 
 from loguru import logger
 
+# 配布DBのスキーマ版数。テーブルや列の意味を変えたら増やす。DATABASE_METADATA の schema_version に記録する。
+SCHEMA_VERSION = 1
+
 # PRAGMA は「DBファイルに永続化されるもの」と「接続ごとの一時設定」が混在するため、
 # 意図が伝わるように分類して定義する。
 PERSISTENT_BUILD_PRAGMAS = [
