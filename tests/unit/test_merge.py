@@ -38,6 +38,21 @@ class TestMergeTags:
         assert len(result) == 1
         assert result["tag"][0] == "new tag"
 
+    def test_separator_only_tags_are_not_registered(self) -> None:
+        """区切り文字のみのタグは誤入力として登録しないことのテスト."""
+        new_df = pl.DataFrame({"source_tag": ["_", "__", "___", " _ ", ",", ",,", "，", "unique_tag"]})
+
+        result = merge_tags(set(), new_df, 100)
+
+        assert result["tag"].to_list() == ["unique tag"]
+        assert result["tag_id"].to_list() == [100]
+
+    def test_kaomoji_and_short_tags_are_kept(self) -> None:
+        """区切り文字を含む顔文字や短いタグは除外しないことのテスト."""
+        result = merge_tags(set(), pl.DataFrame({"source_tag": [">_<", ":_", "^,^", "v"]}), 100)
+
+        assert sorted(result["tag"].to_list()) == [":_", ">_<", "^,^", "v"]
+
     def test_merge_with_existing_tags(self) -> None:
         """既存タグが除外されることのテスト."""
         existing_tags = {"witch", "new tag"}

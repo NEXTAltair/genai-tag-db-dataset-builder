@@ -57,7 +57,10 @@ def merge_tags(
     )
 
     # 3) 既存 tag との差分を抽出
-    new_tags_df = new_df.filter(~pl.col("tag").is_in(existing_tags))
+    # "_" や "," のように区切り文字だけのタグは投稿時の誤入力とみなし登録しない。
+    new_tags_df = new_df.filter(~pl.col("tag").str.contains(r"^[,\s]*$")).filter(
+        ~pl.col("tag").is_in(existing_tags)
+    )
 
     # 4) 重複除去（同じ tag が複数 source_tag から来る場合）
     new_tags_df = new_tags_df.unique(subset=["tag"])

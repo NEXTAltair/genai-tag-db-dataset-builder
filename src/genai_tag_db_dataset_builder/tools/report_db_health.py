@@ -145,6 +145,23 @@ def run_health_checks(db_path: Path, out_dir: Path) -> Path:
             [(r["tag_id"], r["language"], r["translation"]) for r in orphan_trans],
         )
 
+        # Blank tags (only separators remain after normalization)
+        blank_tags = _fetchall(
+            con,
+            """
+            SELECT tag_id, source_tag
+            FROM TAGS
+            WHERE trim(tag, ', ') = ''
+            ORDER BY tag_id
+            """,
+        )
+        blank_tags_out = out_dir / "blank_tags.tsv"
+        blank_tags_count = _write_tsv(
+            blank_tags_out,
+            ["tag_id", "source_tag"],
+            [(r["tag_id"], r["source_tag"]) for r in blank_tags],
+        )
+
         # Duplicates
         dup_tags = _fetchall(
             con,
@@ -243,6 +260,7 @@ def run_health_checks(db_path: Path, out_dir: Path) -> Path:
                 ("orphan_tag_status", orphan_tag_status_count),
                 ("orphan_usage_counts", orphan_usage_count),
                 ("orphan_translations", orphan_trans_count),
+                ("blank_tags", blank_tags_count),
                 ("duplicate_tags", dup_tags_count),
                 ("duplicate_tag_status", dup_status_count),
                 ("alias_inconsistencies", alias_incons_count),
