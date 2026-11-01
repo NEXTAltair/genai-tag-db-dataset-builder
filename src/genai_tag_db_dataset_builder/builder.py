@@ -992,20 +992,25 @@ def _delete_split_title_fragments(conn: sqlite3.Connection) -> int:
 def _flatten_alias_chains(conn: sqlite3.Connection) -> int:
     """alias の参照先が alias のとき、同じ format の最終タグへ付け替える.
 
-    "A -> B -> C" を "A -> C" にする。参照先が同じ format に無い行は report_db_health で報告する。
-    循環している行は解決先が無いので変更しない。
+    "A -> B -> C" を "A -> C" にする。最終タグが同じ format の非 alias でない行と、循環している行は
+    解決先が無いので変更せず、report_db_health で報告する。
 
     Returns:
         付け替えた行数。
     """
     preferred_by_format: dict[int, dict[int, int]] = {}
-    for tag_id, format_id, preferred_tag_id in conn.execute(
-        "SELECT tag_id, format_id, preferred_tag_id FROM TAG_STATUS WHERE alias = 1"
+    canonical_by_format: dict[int, set[int]] = {}
+    for tag_id, format_id, alias, preferred_tag_id in conn.execute(
+        "SELECT tag_id, format_id, alias, preferred_tag_id FROM TAG_STATUS"
     ):
-        preferred_by_format.setdefault(int(format_id), {})[int(tag_id)] = int(preferred_tag_id)
+        if alias:
+            preferred_by_format.setdefault(int(format_id), {})[int(tag_id)] = int(preferred_tag_id)
+        else:
+            canonical_by_format.setdefault(int(format_id), set()).add(int(tag_id))
 
     updates: list[tuple[int, int, int]] = []
     for format_id, preferred in preferred_by_format.items():
+        canonical = canonical_by_format.get(format_id, set())
         for tag_id, first_target in preferred.items():
             if first_target not in preferred:
                 continue
@@ -1014,7 +1019,7 @@ def _flatten_alias_chains(conn: sqlite3.Connection) -> int:
             while target in preferred and target not in seen:
                 seen.add(target)
                 target = preferred[target]
-            if target not in seen:
+            if target in canonical:
                 updates.append((target, tag_id, format_id))
 
     conn.executemany(

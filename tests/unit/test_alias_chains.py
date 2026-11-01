@@ -70,6 +70,22 @@ def test_flatten_alias_chains_leaves_cycles_and_missing_targets(tmp_path: Path) 
     ]
 
 
+def test_flatten_alias_chains_keeps_chain_ending_outside_format(tmp_path: Path) -> None:
+    conn = _status_db(
+        tmp_path / "db.sqlite",
+        [
+            (1, 1, 1, 2),
+            (2, 1, 1, 3),
+            (3, 2, 0, 3),
+        ],
+    )
+
+    assert _flatten_alias_chains(conn) == 0
+    assert conn.execute(
+        "SELECT tag_id, preferred_tag_id FROM TAG_STATUS WHERE format_id = 1 ORDER BY tag_id"
+    ).fetchall() == [(1, 2), (2, 3)]
+
+
 def test_health_report_counts_chains_and_missing_targets(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     conn = _status_db(
