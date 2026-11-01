@@ -40,7 +40,7 @@ class TestMergeTags:
 
     def test_separator_only_tags_are_not_registered(self) -> None:
         """区切り文字のみのタグは誤入力として登録しないことのテスト."""
-        new_df = pl.DataFrame({"source_tag": ["_", "__", "___", " _ ", ",", ",,", "，", "unique_tag"]})
+        new_df = pl.DataFrame({"source_tag": ["_", "__", "___", " _ ", ",", ",,", chr(0xFF0C), "unique_tag"]})
 
         result = merge_tags(set(), new_df, 100)
 
