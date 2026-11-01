@@ -2656,19 +2656,7 @@ def build_dataset(
             _write_non_e621_prefix_repairs_tsv(report_dir_path, prefix_repairs)
             _write_prefix_tag_renames_tsv(report_dir_path, prefix_renames)
 
-        chains_flattened = _flatten_alias_chains(conn)
-        if chains_flattened > 0:
-            source_effects.append(
-                {
-                    "source": "TAG_STATUS",
-                    "action": "repair",
-                    "rows_read": 0,
-                    "db_changes": chains_flattened,
-                    "note": "flatten_alias_chains",
-                }
-            )
-            logger.warning(f"[Repair] Flattened {chains_flattened} alias chains")
-
+        # カンマ付きタグを alias に変えると連鎖が増えるので、連鎖の解消より先に行う。
         comma_aliases = add_comma_tag_aliases(conn, comma_tag_overrides or {})
         if comma_aliases:
             source_effects.append(
@@ -2683,6 +2671,19 @@ def build_dataset(
             logger.info(f"[Repair] Added {len(comma_aliases)} comma tag aliases")
         if report_dir_path:
             write_comma_tag_aliases_tsv(report_dir_path / "comma_tag_aliases.tsv", comma_aliases)
+
+        chains_flattened = _flatten_alias_chains(conn)
+        if chains_flattened > 0:
+            source_effects.append(
+                {
+                    "source": "TAG_STATUS",
+                    "action": "repair",
+                    "rows_read": 0,
+                    "db_changes": chains_flattened,
+                    "note": "flatten_alias_chains",
+                }
+            )
+            logger.warning(f"[Repair] Flattened {chains_flattened} alias chains")
 
         # Legacy sheets enrich the final canonical tags, after normal source repair.
         for bundle_path in tag_table_bundles or []:
