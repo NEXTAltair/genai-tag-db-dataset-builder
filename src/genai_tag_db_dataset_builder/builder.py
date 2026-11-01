@@ -31,6 +31,7 @@ from genai_tag_db_dataset_builder.core.alias_resolution import (
 )
 from genai_tag_db_dataset_builder.core.comma_tags import add_comma_tag_aliases, write_comma_tag_aliases_tsv
 from genai_tag_db_dataset_builder.core.database import (
+    SCHEMA_VERSION,
     apply_connection_pragmas,
     build_indexes,
     create_database,
@@ -1029,6 +1030,22 @@ def _flatten_alias_chains(conn: sqlite3.Connection) -> int:
     )
     conn.commit()
     return len(updates)
+
+
+def _find_removed_tags(conn: sqlite3.Connection, base_tags: set[str]) -> list[str]:
+    """ベースDBにあって出力DBから消えたタグを返す.
+
+    TAGS.tag は利用側の保存キーなので、消えると保存済みのタグを引けなくなる。
+    """
+    current_tags = {row[0] for row in conn.execute("SELECT tag FROM TAGS")}
+    return sorted(base_tags - current_tags)
+
+
+def _write_removed_tags_tsv(path: Path, tags: list[str]) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["tag"])
+        writer.writerows([tag] for tag in tags)
 
 
 def _write_conflicts_tsv(path: Path, conflicts: list[_ConflictRow]) -> None:
@@ -2145,6 +2162,7 @@ def build_dataset(
     conn = sqlite3.connect(output_path)
     apply_connection_pragmas(conn, profile="build")
     existing_tags: set[str] = set()
+    base_tags: set[str] = set()
     tags_mapping: dict[str, int] = {}
     try:
         # Phase 1: tags_v4.db 取り込みは廃止。base_db_path 未指定の場合は空から開始する。
@@ -2158,6 +2176,7 @@ def build_dataset(
             logger.info("[Phase 1] Skipped (base_db_path specified). Loading existing tags from base DB.")
             cursor = conn.execute("SELECT tag FROM TAGS")
             existing_tags = {row[0] for row in cursor.fetchall()}
+            base_tags = set(existing_tags)
             cursor = conn.execute("SELECT MAX(tag_id) FROM TAGS")
             max_tag_id = cursor.fetchone()[0]
             next_tag_id = (max_tag_id or 0) + 1
@@ -2692,11 +2711,26 @@ def build_dataset(
         conn = sqlite3.connect(output_path)
         apply_connection_pragmas(conn, profile="build")
         placeholder_repairs = _repair_placeholder_tag_ids(conn)
-        conn.execute(
-            "INSERT OR REPLACE INTO DATABASE_METADATA (key, value) VALUES ('version', ?)",
-            (version,),
+        conn.executemany(
+            "INSERT OR REPLACE INTO DATABASE_METADATA (key, value) VALUES (?, ?)",
+            [("version", version), ("schema_version", str(SCHEMA_VERSION))],
         )
         conn.commit()
+
+        removed_tags = _find_removed_tags(conn, base_tags)
+        if removed_tags:
+            logger.warning(f"{len(removed_tags)} tags from the base DB are missing from the output")
+            source_effects.append(
+                {
+                    "source": "TAGS",
+                    "action": "removed_from_base",
+                    "rows_read": len(base_tags),
+                    "db_changes": len(removed_tags),
+                    "note": "see removed_tags.tsv",
+                }
+            )
+        if report_dir_path:
+            _write_removed_tags_tsv(report_dir_path / "removed_tags.tsv", removed_tags)
 
         logger.info(f"[COMPLETE] Dataset built successfully: {output_path}")
 

@@ -13,6 +13,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from genai_tag_db_dataset_builder.core.database import SCHEMA_VERSION
+
 
 def generate_metadata(
     db_path: Path | str,
@@ -62,7 +64,7 @@ def generate_metadata(
         metadata = {
             "version": version,
             "build_date": datetime.now(UTC).isoformat(),
-            "schema_version": "1.0",
+            "schema_version": SCHEMA_VERSION,
             "statistics": {
                 "total_tags": tags_count,
                 "total_formats": formats_count,
