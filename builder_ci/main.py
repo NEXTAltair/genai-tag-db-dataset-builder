@@ -329,6 +329,8 @@ def _health_to_manifest(summary: dict) -> tuple[dict | None, dict | None]:
         "duplicate_tags": _coerce_int(summary.get("duplicate_tags")),
         "duplicate_tag_status": _coerce_int(summary.get("duplicate_tag_status")),
         "alias_inconsistencies": _coerce_int(summary.get("alias_inconsistencies")),
+        "alias_chains": _coerce_int(summary.get("alias_chains")),
+        "alias_missing_preferred": _coerce_int(summary.get("alias_missing_preferred")),
         "bad_usage_counts": _coerce_int(summary.get("bad_usage_counts")),
     }
     return stats, health
