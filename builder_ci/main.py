@@ -41,6 +41,7 @@ from genai_tag_db_dataset_builder.core.alias_resolution import (  # noqa: E402
     AliasResolution,
     load_alias_resolution,
 )
+from genai_tag_db_dataset_builder.core.comma_tags import load_comma_tag_overrides  # noqa: E402
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate  # noqa: E402
 from genai_tag_db_dataset_builder.tools.report_db_health import run_health_checks  # noqa: E402
 
@@ -66,6 +67,10 @@ def _external_sources_dir(repo_root: Path) -> Path:
 
 def _alias_resolution_override_path(repo_root: Path) -> Path:
     return repo_root / "overrides" / "alias_resolution.yml"
+
+
+def _comma_tag_override_path(repo_root: Path) -> Path:
+    return repo_root / "overrides" / "comma_tags.yml"
 
 
 def _select_sources_for_target(sources: list[dict], target: str) -> list[dict]:
@@ -351,6 +356,7 @@ def _build_target(
     hf_repo_id: str | None = None,
     override_path: Path | None = None,
     alias_resolution: AliasResolution | None = None,
+    comma_tag_overrides: dict[str, str] | None = None,
     inherited_sources: list[dict] | None = None,
 ) -> Path:
     logger.info(f"=== Build start: {target.name} ===")
@@ -437,6 +443,7 @@ def _build_target(
         base_db_path=base_db_path,
         overwrite=True,
         alias_resolution=alias_resolution,
+        comma_tag_overrides=comma_tag_overrides,
         tag_table_bundles=[_local_bundle_path(src) for src in sources if src.get("kind") == "local_bundle"],
     )
 
@@ -513,6 +520,7 @@ def orchestrate(
 
     override_path = _alias_resolution_override_path(_repo_root())
     alias_resolution = load_alias_resolution(override_path)
+    comma_tag_overrides = load_comma_tag_overrides(_comma_tag_override_path(_repo_root()))
 
     def target_cfg(name: str) -> TargetConfig:
         out_dir = output_root / f"out_db_{name}"
@@ -559,6 +567,7 @@ def orchestrate(
             hf_repo_id=repo_cc0,
             override_path=override_path,
             alias_resolution=alias_resolution,
+            comma_tag_overrides=comma_tag_overrides,
         )
 
     def run_mit(cc0_db: Path) -> None:
@@ -578,6 +587,7 @@ def orchestrate(
             hf_repo_id=repo_mit,
             override_path=override_path,
             alias_resolution=alias_resolution,
+            comma_tag_overrides=comma_tag_overrides,
             inherited_sources=_select_sources_for_target(sources, "cc0"),
         )
 
@@ -598,6 +608,7 @@ def orchestrate(
             hf_repo_id=repo_cc4,
             override_path=override_path,
             alias_resolution=alias_resolution,
+            comma_tag_overrides=comma_tag_overrides,
             inherited_sources=_select_sources_for_target(sources, "cc0"),
         )
 

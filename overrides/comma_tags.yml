@@ -1,0 +1,30 @@
+# カンマを含むタグの Danbooru 表記への手動対応
+#
+# カンマはプロンプトの区切り文字なので、カンマ付きタグは Danbooru 形式の alias として登録する。
+# 機械で判定できるものは core/comma_tags.py のルールで処理し、ここには人が確認したものだけを書く。
+#
+# 形式:
+#   comma_tags:
+#     <TAGS.tag>: <Danbooru の TAGS.tag>
+#
+# 対応先が DB に無い場合は、Danbooru 形式の正規タグとして作成する。
+
+comma_tags:
+  'tora, tiger \(zodiac\)': 'tiger'
+  '25-ji, nightcord de.': '25-ji nightcord de. \(project sekai\)'
+  'eiki shiki, yamaxanadu': 'shiki eiki'
+  'the 100 girlfriends who really, really, really love you': 'kimi no koto ga dai dai dai dai daisuki na 100-nin no kanojo'
+  '夏色えがおで1,2,jump!': 'natsuiro egao de 1 2 jump!'
+  'ruby gillman, teenage kraken': 'ruby gillman: teenage kraken'
+  'warhammer 40,000': 'warhammer 40k'
+  'paws, inc.': 'paws inc.'
+  'nintendo co., ltd': 'nintendo'
+  'komi-san wa, comyushou desu.': 'komi-san wa komyushou desu'
+  'tensei shitara dai nana ouji dattanode, kimamani majutsu o kiwamemasu': 'tensei shitara dai nana oji datta no de: kimama ni majutsu o kiwamemasu'
+  'no, thank you !!!': 'no thank you!!!'
+  "mixspeaker's,inc.": "mixspeaker's inc."
+  'no,thankyou!': 'no thank you!!!'
+  'haru \(no, thank you !!!\)': 'haru \(no thank you!!!\)'
+  'please put them on, takamine-san': 'haite kudasai takamine-san'
+  'kanojo, okarishimasu \(rent-a-girlfriend\)': 'kanojo okarishimasu'
+  'shin no nakama ja nai to yuusha no party wo oidasareta node, henkyou de slow life suru koto ni shimashita': 'shin no nakama janai to yuusha no party wo oidasareta no de henkyou de slow life suru koto ni shimashita'
