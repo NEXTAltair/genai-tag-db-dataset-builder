@@ -821,12 +821,12 @@ def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
     取り込み元 (danbooru-ja-tag-pair 等) が全行を ja ラベルで投入するため、中国語訳が
     ja に混入する (LoRAIro #1213: GUI の日本語表示に「哥特」等が出る)。共有漢字を通す
     必須文字種チェックでは検出できないため、日本語で使われない簡体字専用文字と、
-    漢字のみで日本語の文字コードに無い字を含む訳語 ("晚礼服" 等) で検出する。
+    漢字のみで JIS X 0213 に無い字を含む訳語 ("绫清竹" 等) で検出する。
 
     UNIQUE(tag_id, language, translation) 衝突 (同内容の zh 行が既存) の場合は ja 行を
     削除する。それ以外は language を zh へ UPDATE する。
 
-    日中で共用する異体字だけが JIS 外の訳語 ("輝夜姬" 等) は、ja に残したまま zh にも登録する。
+    文字からは日中を判断できない訳語 ("輝夜姬" "德川" 等) は、ja に残したまま zh にも登録する。
 
     NOTE: これは下限検出。「哥特」「公主裙」等の日本語の文字だけで書ける中国語は検出できない
     (取り込み元の language ラベリング見直しが根治、本処理は published DB の緩和策)。

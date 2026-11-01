@@ -6,7 +6,7 @@ import re
 
 # 日本語で使われない簡体字専用の文字集合。共有漢字 (国/学/体 等) は誤検出防止のため除外。
 SIMPLIFIED_ONLY_CHINESE_CHARS = frozenset(
-    "计订认讥议讨让训记讲许论讼访设证评识诉词译试诗诚话诞询该详语误说请诸诺读课谁调谈谊谜谢谣谱纠红纤约级纪纫纬纯纱纳纵纶纷纸纹纺线练组绅细织终绍经绑绒结绕绘给绚络绝绞统绢绣继绩绪续绮绯绳维绵综绽绿缀缎缓缔缘缚缝缠缩缨缤针钉钓钗钝钟钢钥钦钩钮钱钻铁铃铅铜铠银铸铺链销锁锄锋锐错锡锣锤锦键锯镇镖镜镰饥饭饮饰饱饲饵饼馆馒门闩闪闭问闯闰闲间闷闸闹闺闻阀阁阅阎阐马驭驮驯驰驱驳驴驶驹驻驼驾骂骄骑骏骗骚骤鸟鸡鸣鸦鸭鸯鸳鸽鹃鹅鹉鹊鹏鹦鹰贝贞负贡财责贤败货质贩贪贫贯贱贴贵贷贸费贺贼贾赁资赋赌赏赐赔赖赚赛赞赠页顶顷项顺须顽顾顿颁颂预颅领颇频颖颗题颜额颠颤车轧轨转轮软轴轻载轿辅辆辈辉辐输辖辗鱼鲁鲜鲤鲨鳞风飘龙庞长东乐书习乡买卖亚产见观觉规视览宽单头发师时电爱华举义乌亏无专丛丝两严丧个丰临为丽么亿仅从仑仓们价众优伙伞伟传伤伦伪侠侧侨俩俭债倾偿儿兰关兴养兽冈军农冯决况净凤凯击刘则刚创剑剧办动势协卫历厅压厌县变叹吓吕吗听启呜员响哑唤团园围图圆圣场坏块坚墙壶处备复够夹夺奋奖妆妇妈娇实宠审宫对寻导尔尘尝层岁岛帅带帮广庆库应庙废开异弃弹强归录忆忧怀态总恶悬惊惧惯愤愿懒戏战户扑执扩扫扬扰抚抢护报拟拥择挂挡挤挥损换显晓暂术杀杂权极构枪枫标树样检樱欢毁毕气汉汤沟泽洁浊测浑浓涂润涩渊满滚滨灭灵灾炼热爷牵犹狮狱猎环现疯疗瘦皱盐监盖盘码础确祸离种积稳穷窗竞笔笼签简粮紧罗罚羡联聪肃肠肤肾肿脏脑脸腾舰艳苏获萝萤营蓝蔷虑虽蜡补衬袜裤这边达迁过运还进远违连迟适选遗邮邻酱释鉴阶际陆隐难雏雾黑默齐齿"
+    "晚荣岭呕阴烬蚝计订认讥议讨让训记讲许论讼访设证评识诉词译试诗诚话诞询该详语误说请诸诺读课谁调谈谊谜谢谣谱纠红纤约级纪纫纬纯纱纳纵纶纷纸纹纺线练组绅细织终绍经绑绒结绕绘给绚络绝绞统绢绣继绩绪续绮绯绳维绵综绽绿缀缎缓缔缘缚缝缠缩缨缤针钉钓钗钝钟钢钥钦钩钮钱钻铁铃铅铜铠银铸铺链销锁锄锋锐错锡锣锤锦键锯镇镖镜镰饥饭饮饰饱饲饵饼馆馒门闩闪闭问闯闰闲间闷闸闹闺闻阀阁阅阎阐马驭驮驯驰驱驳驴驶驹驻驼驾骂骄骑骏骗骚骤鸟鸡鸣鸦鸭鸯鸳鸽鹃鹅鹉鹊鹏鹦鹰贝贞负贡财责贤败货质贩贪贫贯贱贴贵贷贸费贺贼贾赁资赋赌赏赐赔赖赚赛赞赠页顶顷项顺须顽顾顿颁颂预颅领颇频颖颗题颜额颠颤车轧轨转轮软轴轻载轿辅辆辈辉辐输辖辗鱼鲁鲜鲤鲨鳞风飘龙庞长东乐书习乡买卖亚产见观觉规视览宽单头发师时电爱华举义乌亏无专丛丝两严丧个丰临为丽么亿仅从仑仓们价众优伙伞伟传伤伦伪侠侧侨俩俭债倾偿儿兰关兴养兽冈军农冯决况净凤凯击刘则刚创剑剧办动势协卫历厅压厌县变叹吓吕吗听启呜员响哑唤团园围图圆圣场坏块坚墙壶处备复够夹夺奋奖妆妇妈娇实宠审宫对寻导尔尘尝层岁岛帅带帮广庆库应庙废开异弃弹强归录忆忧怀态总恶悬惊惧惯愤愿懒戏战户扑执扩扫扬扰抚抢护报拟拥择挂挡挤挥损换显晓暂术杀杂权极构枪枫标树样检樱欢毁毕气汉汤沟泽洁浊测浑浓涂润涩渊满滚滨灭灵灾炼热爷牵犹狮狱猎环现疯疗瘦皱盐监盖盘码础确祸离种积稳穷窗竞笔笼签简粮紧罗罚羡联聪肃肠肤肾肿脏脑脸腾舰艳苏获萝萤营蓝蔷虑虽蜡补衬袜裤这边达迁过运还进远违连迟适选遗邮邻酱释鉴阶际陆隐难雏雾黑默齐齿"
 )
 
 # 仮名のみ。Katakana ブロック内の記号 (U+30A0, ・ U+30FB, ー U+30FC) は他言語の訳語にも
@@ -17,31 +17,33 @@ _CJK_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 
 _HAN_ONLY_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
-# JIS 外でも日本語の人名に使う異体字。
-_JAPANESE_NAME_VARIANTS = frozenset("\u9ad9\ufa11")
+# JIS X 0213 外だが日本語の語にも使われる字。
+_SHARED_HAN_VARIANTS = frozenset("姬髙")
 
 
-# JIS 外だが "輝夜姬" "酒吞童子" のように日本語の語にも使われる字。ja と zh の両方に残す。
-_SHARED_HAN_VARIANTS = frozenset("姬吞")
-
-
-def has_shared_han_variant(text: str) -> bool:
-    """漢字のみの訳語が、日中で共用する異体字を含むなら True."""
-    return _HAN_ONLY_RE.fullmatch(text) is not None and not _SHARED_HAN_VARIANTS.isdisjoint(text)
+def _encodable(char: str, encoding: str) -> bool:
+    try:
+        char.encode(encoding)
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def has_non_japanese_han(text: str) -> bool:
-    """漢字のみの訳語が、日本語の文字コード (EUC-JP) に無い字を含むなら True."""
+    """漢字のみの訳語が、JIS X 0213 にも無い字を含むなら True (中国語と判断できる)."""
     if _HAN_ONLY_RE.fullmatch(text) is None:
         return False
-    for char in text:
-        if char in _JAPANESE_NAME_VARIANTS or char in _SHARED_HAN_VARIANTS:
-            continue
-        try:
-            char.encode("euc_jp")
-        except UnicodeEncodeError:
-            return True
-    return False
+    return any(char not in _SHARED_HAN_VARIANTS and not _encodable(char, "euc_jis_2004") for char in text)
+
+
+def has_shared_han_variant(text: str) -> bool:
+    """日中どちらの語か文字からは判断できない漢字のみの訳語なら True.
+
+    "俱利伽羅" "德川" は日本語、"德意志" は中国語で、どれも EUC-JP には無いが JIS X 0213 にはある。
+    """
+    if _HAN_ONLY_RE.fullmatch(text) is None or has_non_japanese_han(text):
+        return False
+    return any(not _encodable(char, "euc_jp") for char in text)
 
 
 def has_kana(text: str) -> bool:

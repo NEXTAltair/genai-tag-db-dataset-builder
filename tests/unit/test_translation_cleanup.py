@@ -287,18 +287,21 @@ def test_reclassify_moves_han_only_text_outside_japanese_charset() -> None:
         "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
         [
             (1, "ja", "晚礼服"),
-            (2, "ja", "動物"),
-            (3, "ja", "毛巾"),
-            (4, "ja", "髙橋"),
-            (5, "ja", "柿﨑"),
+            (2, "ja", "绫清竹"),
+            (3, "ja", "動物"),
+            (4, "ja", "毛巾"),
         ],
     )
     conn.commit()
 
-    assert _reclassify_chinese_ja_translations_as_zh(conn) == 1
-    assert conn.execute(
-        "SELECT tag_id, translation FROM TAG_TRANSLATIONS WHERE language = 'zh'"
-    ).fetchall() == [(1, "晚礼服")]
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 2
+    rows = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
+    assert rows == {
+        (1, "zh", "晚礼服"),
+        (2, "zh", "绫清竹"),
+        (3, "ja", "動物"),
+        (4, "ja", "毛巾"),
+    }
 
 
 def test_reclassify_keeps_shared_variants_in_both_languages() -> None:
@@ -310,19 +313,23 @@ def test_reclassify_keeps_shared_variants_in_both_languages() -> None:
         [
             (1, "ja", "輝夜姬"),
             (2, "ja", "酒吞童子"),
-            (3, "ja", "姫"),
+            (3, "ja", "俱利伽羅"),
+            (4, "ja", "剝離"),
+            (5, "ja", "德川"),
+            (6, "ja", "髙橋"),
+            (7, "ja", "宮﨑敏郎"),
+            (8, "ja", "姫"),
         ],
     )
     conn.commit()
 
-    assert _reclassify_chinese_ja_translations_as_zh(conn) == 2
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 7
     rows = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
+    shared = {1: "輝夜姬", 2: "酒吞童子", 3: "俱利伽羅", 4: "剝離", 5: "德川", 6: "髙橋", 7: "宮﨑敏郎"}
     assert rows == {
-        (1, "ja", "輝夜姬"),
-        (1, "zh", "輝夜姬"),
-        (2, "ja", "酒吞童子"),
-        (2, "zh", "酒吞童子"),
-        (3, "ja", "姫"),
+        *((tag_id, "ja", text) for tag_id, text in shared.items()),
+        *((tag_id, "zh", text) for tag_id, text in shared.items()),
+        (8, "ja", "姫"),
     }
 
 
