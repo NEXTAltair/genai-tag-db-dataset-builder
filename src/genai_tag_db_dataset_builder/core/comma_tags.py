@@ -94,7 +94,7 @@ def add_comma_tag_aliases(conn: sqlite3.Connection, overrides: dict[str, str]) -
         is_alias, preferred_tag_id, type_id = status[target_id]
         if is_alias:
             target_id = preferred_tag_id
-            if target_id not in status or status[target_id][0]:
+            if target_id not in status:
                 continue
             type_id = status[target_id][2]
         if target_id == tag_id:
@@ -108,6 +108,7 @@ def add_comma_tag_aliases(conn: sqlite3.Connection, overrides: dict[str, str]) -
             "type_id = excluded.type_id, alias = 1, preferred_tag_id = excluded.preferred_tag_id",
             (tag_id, _DANBOORU_FORMAT_ID, type_id, target_id),
         )
+        status[tag_id] = (True, target_id, type_id)
         added.append({"tag": tag, "target": target_name, "reason": reason})
     conn.commit()
     return added

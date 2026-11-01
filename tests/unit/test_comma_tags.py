@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 
+from genai_tag_db_dataset_builder.builder import _flatten_alias_chains
 from genai_tag_db_dataset_builder.core.comma_tags import add_comma_tag_aliases
 from genai_tag_db_dataset_builder.core.database import create_schema
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
@@ -96,6 +97,39 @@ def test_override_resolves_alias_target_and_keeps_type(tmp_path: Path) -> None:
     assert conn.execute(
         "SELECT type_id FROM TAG_STATUS WHERE tag_id = ? AND format_id = 1", (ids["title, en"],)
     ).fetchone() == (3,)
+
+
+def test_incoming_aliases_follow_converted_comma_tag(tmp_path: Path) -> None:
+    conn = _db(
+        tmp_path / "db.sqlite",
+        ["old title", "a long title, here", "a long title here"],
+        {"a long title, here": (3, 0), "a long title here": (3, 20)},
+    )
+    ids = dict(conn.execute("SELECT tag, tag_id FROM TAGS"))
+    conn.execute(
+        "INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id) VALUES (?, 1, 3, 1, ?)",
+        (ids["old title"], ids["a long title, here"]),
+    )
+
+    add_comma_tag_aliases(conn, {})
+    _flatten_alias_chains(conn)
+
+    assert _preferred(conn, "old title") == "a long title here"
+    assert _preferred(conn, "a long title, here") == "a long title here"
+
+
+def test_override_can_target_multi_hop_alias(tmp_path: Path) -> None:
+    conn = _db(tmp_path / "db.sqlite", ["title, en", "first", "second", "romaji"], {"romaji": (3, 100)})
+    ids = dict(conn.execute("SELECT tag, tag_id FROM TAGS"))
+    conn.executemany(
+        "INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id) VALUES (?, 1, 3, 1, ?)",
+        [(ids["first"], ids["second"]), (ids["second"], ids["romaji"])],
+    )
+
+    add_comma_tag_aliases(conn, {"title, en": "first"})
+    _flatten_alias_chains(conn)
+
+    assert _preferred(conn, "title, en") == "romaji"
 
 
 def test_override_creates_missing_target(tmp_path: Path) -> None:
