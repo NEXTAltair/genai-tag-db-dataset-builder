@@ -16,6 +16,25 @@ _HANGUL_RE = re.compile("[\uac00-\ud7af]")
 _CJK_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 
+_HAN_ONLY_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
+# JIS 外でも日本語の人名に使う異体字。
+_JAPANESE_NAME_VARIANTS = frozenset("\u9ad9\ufa11")
+
+
+def has_non_japanese_han(text: str) -> bool:
+    """漢字のみの訳語が、日本語の文字コード (EUC-JP) に無い字を含むなら True."""
+    if _HAN_ONLY_RE.fullmatch(text) is None:
+        return False
+    for char in text:
+        if char in _JAPANESE_NAME_VARIANTS:
+            continue
+        try:
+            char.encode("euc_jp")
+        except UnicodeEncodeError:
+            return True
+    return False
+
+
 def has_kana(text: str) -> bool:
     return _KANA_RE.search(text) is not None
 

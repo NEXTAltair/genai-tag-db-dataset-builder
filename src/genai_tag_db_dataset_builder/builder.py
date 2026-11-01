@@ -39,7 +39,7 @@ from genai_tag_db_dataset_builder.core.enrichment import apply_enrichment, load_
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
 from genai_tag_db_dataset_builder.core.normalize import canonicalize_source_tag
-from genai_tag_db_dataset_builder.core.scripts import SIMPLIFIED_ONLY_CHINESE_CHARS
+from genai_tag_db_dataset_builder.core.scripts import SIMPLIFIED_ONLY_CHINESE_CHARS, has_non_japanese_han
 from genai_tag_db_dataset_builder.core.translation_text import split_translation_text
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 
@@ -812,16 +812,17 @@ def _delete_translations_missing_required_script(
 
 
 def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
-    """language='ja' の中国語行 (簡体字専用文字を含む) を language='zh' へ再分類する.
+    """language='ja' の中国語行を language='zh' へ再分類する.
 
     取り込み元 (danbooru-ja-tag-pair 等) が全行を ja ラベルで投入するため、中国語訳が
     ja に混入する (LoRAIro #1213: GUI の日本語表示に「哥特」等が出る)。共有漢字を通す
-    必須文字種チェックでは検出できないため、日本語で使われない簡体字専用文字で検出する。
+    必須文字種チェックでは検出できないため、日本語で使われない簡体字専用文字と、
+    漢字のみで日本語の文字コードに無い字を含む訳語 ("晚礼服" 等) で検出する。
 
     UNIQUE(tag_id, language, translation) 衝突 (同内容の zh 行が既存) の場合は ja 行を
     削除する。それ以外は language を zh へ UPDATE する。
 
-    NOTE: これは下限検出。「哥特」「公主裙」等の簡体字を含まない中国語は検出できない
+    NOTE: これは下限検出。「哥特」「公主裙」等の日本語の文字だけで書ける中国語は検出できない
     (取り込み元の language ラベリング見直しが根治、本処理は published DB の緩和策)。
 
     Returns:
@@ -835,7 +836,9 @@ def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
 
     changes_before = conn.total_changes
     for translation_id, tag_id, text in rows:
-        if not text or not any(ch in SIMPLIFIED_ONLY_CHINESE_CHARS for ch in str(text)):
+        if not text or not (
+            any(ch in SIMPLIFIED_ONLY_CHINESE_CHARS for ch in str(text)) or has_non_japanese_han(str(text))
+        ):
             continue
         dup = conn.execute(
             "SELECT 1 FROM TAG_TRANSLATIONS WHERE tag_id = ? AND language = 'zh' AND translation = ?",
@@ -847,6 +850,41 @@ def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
             conn.execute(
                 "UPDATE TAG_TRANSLATIONS SET language = 'zh' WHERE translation_id = ?",
                 (int(translation_id),),
+            )
+    conn.commit()
+    return int(conn.total_changes - changes_before)
+
+
+_MACHINE_FATE_SUFFIX = re.compile("[(\uff08]運命(?:/[^)\uff09]+)?[)\uff09]")
+
+
+def _delete_machine_fate_translations(conn: sqlite3.Connection) -> int:
+    """Fate 系タグの "(fate)" を "(運命)" と直訳した ja 訳を削除する.
+
+    別の ja 訳が残るタグだけを対象にする。"運命の黄薔薇" のような正しい訳はカッコ形でないので残る。
+
+    Returns:
+        削除した行数。
+    """
+    rows = conn.execute(
+        "SELECT x.translation_id, x.tag_id, x.translation FROM TAG_TRANSLATIONS x "
+        "JOIN TAGS t ON t.tag_id = x.tag_id "
+        "WHERE x.language = 'ja' AND t.tag LIKE '%(fate%' AND x.translation LIKE '%運命%'"
+    ).fetchall()
+    machine_ids: dict[int, list[int]] = {}
+    for translation_id, tag_id, translation in rows:
+        if _MACHINE_FATE_SUFFIX.search(translation):
+            machine_ids.setdefault(int(tag_id), []).append(int(translation_id))
+
+    changes_before = conn.total_changes
+    for tag_id, translation_ids in machine_ids.items():
+        total = conn.execute(
+            "SELECT COUNT(*) FROM TAG_TRANSLATIONS WHERE tag_id = ? AND language = 'ja'", (tag_id,)
+        ).fetchone()[0]
+        if total > len(translation_ids):
+            conn.executemany(
+                "DELETE FROM TAG_TRANSLATIONS WHERE translation_id = ?",
+                [(translation_id,) for translation_id in translation_ids],
             )
     conn.commit()
     return int(conn.total_changes - changes_before)
@@ -2470,6 +2508,20 @@ def build_dataset(
                 }
             )
             logger.warning(f"[Cleanup] Reclassified {zh_reclassified} ja->zh translations (Chinese in ja)")
+
+        changes_before = conn.total_changes
+        fate_deleted = _delete_machine_fate_translations(conn)
+        if fate_deleted > 0:
+            source_effects.append(
+                {
+                    "source": "TAG_TRANSLATIONS",
+                    "action": "cleanup_deleted",
+                    "rows_read": 0,
+                    "db_changes": int(conn.total_changes - changes_before),
+                    "note": "delete_machine_fate_translations",
+                }
+            )
+            logger.warning(f"[Cleanup] Deleted {fate_deleted} machine-translated Fate titles")
 
         # LoRAIro #1213: 先頭 '_' のエイリアス表記が en 翻訳に混入した行を削除。
         changes_before = conn.total_changes
