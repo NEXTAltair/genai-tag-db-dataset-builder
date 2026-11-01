@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ast
 import io
-import re
 import tokenize
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +27,7 @@ from datasets import (  # type: ignore[import-untyped,unused-ignore]
 )
 
 from ..core.scripts import guess_language_by_script, has_kana
+from ..core.translation_text import split_translation_text
 
 
 def _is_local_dataset_path(repo_id_or_path: str) -> bool:
@@ -61,9 +61,6 @@ def _load_split(repo_id_or_path: str, revision: str | None, split: str | None) -
         # load_dataset で split 指定をしない場合に備えて明示切り替えも許可する
         ds = loaded[split]
     return ds
-
-
-_TRANSLATION_SPLIT_RE = re.compile("[,\uff0c\u3001\uff64\ufe50]")
 
 
 # 言語ごとの翻訳列候補（先頭ほど優先）。
@@ -109,9 +106,7 @@ def _explode_translations(value: Any) -> list[str]:
     if parsed is not None:
         return _explode_translations(parsed)
     # 既存CSVと同様に、カンマ区切りの揺れは複数翻訳として取り込む（重複は許容）
-    parts = [p.strip() for p in _TRANSLATION_SPLIT_RE.split(s)]
-    cleaned = [p.strip(" \"'\u201c\u201d\u2018\u2019\u300c\u300d") for p in parts]
-    return [p for p in cleaned if p]
+    return split_translation_text(s)
 
 
 @dataclass(frozen=True)

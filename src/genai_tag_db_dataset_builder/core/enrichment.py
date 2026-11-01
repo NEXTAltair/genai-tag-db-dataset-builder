@@ -216,7 +216,11 @@ def apply_enrichment(
                 (tag_id,),
             ).fetchone()
             translations = sorted(
-                {part for text in row.translations for part in split_translation_text(text)}
+                {
+                    part
+                    for text in row.translations
+                    for part in split_translation_text(text, ideographic_comma=True)
+                }
             )
             if has_ja or alias_ja:
                 result.translation_notes.append(

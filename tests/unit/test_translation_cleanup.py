@@ -2,6 +2,7 @@ import sqlite3
 
 from genai_tag_db_dataset_builder.builder import (
     _delete_ja_translations_by_value_list,
+    _delete_split_title_fragments,
     _delete_translations_ascii_only_for_languages,
     _delete_translations_missing_required_script,
     _normalize_language_value,
@@ -142,6 +143,49 @@ def test_split_comma_delimited_translations_removes_empty_entries() -> None:
     assert (1, "ja", "アークナイツ") in remaining
     assert (1, "ja", "アークナイツバトルイラコン") in remaining
     assert not any(r[2].startswith(",") for r in remaining)
+
+
+def test_split_comma_delimited_translations_keeps_ideographic_comma() -> None:
+    conn = _create_translations_db_with_timestamps()
+    conn.execute(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation, created_at, updated_at) "
+        "VALUES (1, 'ja', '25時、ナイトコードで。', '2024-01-01', '2024-01-02')"
+    )
+    conn.commit()
+
+    assert _split_comma_delimited_translations(conn) == 0
+    assert conn.execute("SELECT translation FROM TAG_TRANSLATIONS").fetchall() == [
+        ("25時、ナイトコードで。",)
+    ]
+
+
+def test_delete_split_title_fragments() -> None:
+    conn = _create_translations_db_with_timestamps()
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+        [
+            (1, "ja", "25時"),
+            (1, "ja", "ナイトコードで。"),
+            (1, "ja", "25時、ナイトコードで。"),
+            (1, "ja", "ニーゴ"),
+            (1, "zh", "25時"),
+            (2, "ja", "25時"),
+            (3, "ja", "藤岡弘"),
+            (3, "ja", "藤岡弘、"),
+        ],
+    )
+    conn.commit()
+
+    assert _delete_split_title_fragments(conn) == 2
+    remaining = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
+    assert remaining == {
+        (1, "ja", "25時、ナイトコードで。"),
+        (1, "ja", "ニーゴ"),
+        (1, "zh", "25時"),
+        (2, "ja", "25時"),
+        (3, "ja", "藤岡弘"),
+        (3, "ja", "藤岡弘、"),
+    }
 
 
 def test_split_comma_delimited_translations_replaces_single_part() -> None:

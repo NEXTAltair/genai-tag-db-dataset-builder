@@ -875,8 +875,8 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
     rows = conn.execute(
         "SELECT translation_id, tag_id, language, translation, created_at, updated_at "
         "FROM TAG_TRANSLATIONS WHERE translation LIKE ? OR translation LIKE ? "
-        "OR translation LIKE ? OR translation LIKE ? OR translation LIKE ?",
-        ("%,%", "%\uff0c%", "%\u3001%", "%\uff64%", "%\ufe50%"),
+        "OR translation LIKE ? OR translation LIKE ?",
+        ("%,%", "%\uff0c%", "%\uff64%", "%\ufe50%"),
     ).fetchall()
     if not rows:
         return 0
@@ -911,6 +911,31 @@ def _split_comma_delimited_translations(conn: sqlite3.Connection) -> int:
         )
     conn.commit()
     return len(deleted_ids)
+
+
+def _delete_split_title_fragments(conn: sqlite3.Connection) -> int:
+    """読点で切られていた題名の断片を、完全な訳が同じタグにあれば削除する.
+
+    過去のビルドは読点も区切りとして扱ったため、ベースDBに断片が残っている。
+
+    Returns:
+        削除した行数。
+    """
+    rows = conn.execute(
+        "SELECT tag_id, language, translation FROM TAG_TRANSLATIONS WHERE translation LIKE ?",
+        ("%\u3001%",),
+    ).fetchall()
+    changes_before = conn.total_changes
+    for tag_id, language, translation in rows:
+        parts = split_translation_text(translation, ideographic_comma=True)
+        if len(parts) < 2:
+            continue
+        conn.executemany(
+            "DELETE FROM TAG_TRANSLATIONS WHERE tag_id = ? AND language = ? AND translation = ?",
+            [(tag_id, language, part) for part in parts],
+        )
+    conn.commit()
+    return int(conn.total_changes - changes_before)
 
 
 def _write_conflicts_tsv(path: Path, conflicts: list[_ConflictRow]) -> None:
@@ -2476,6 +2501,20 @@ def build_dataset(
             logger.warning(
                 f"[Cleanup] Split {split_deleted} comma-delimited translations in TAG_TRANSLATIONS"
             )
+
+        changes_before = conn.total_changes
+        fragments_deleted = _delete_split_title_fragments(conn)
+        if fragments_deleted > 0:
+            source_effects.append(
+                {
+                    "source": "TAG_TRANSLATIONS",
+                    "action": "cleanup_deleted",
+                    "rows_read": 0,
+                    "db_changes": int(conn.total_changes - changes_before),
+                    "note": "delete_split_title_fragments",
+                }
+            )
+            logger.warning(f"[Cleanup] Deleted {fragments_deleted} split title fragments")
 
         # Phase 2.5: type/format mapping の不足救済（外部キー整合性）
         _repair_missing_type_format_mapping(conn, report_dir=report_dir_path if report_dir_path else None)
