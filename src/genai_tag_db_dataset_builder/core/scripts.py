@@ -21,12 +21,21 @@ _HAN_ONLY_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 _JAPANESE_NAME_VARIANTS = frozenset("\u9ad9\ufa11")
 
 
+# JIS 外だが "輝夜姬" "酒吞童子" のように日本語の語にも使われる字。ja と zh の両方に残す。
+_SHARED_HAN_VARIANTS = frozenset("姬吞")
+
+
+def has_shared_han_variant(text: str) -> bool:
+    """漢字のみの訳語が、日中で共用する異体字を含むなら True."""
+    return _HAN_ONLY_RE.fullmatch(text) is not None and not _SHARED_HAN_VARIANTS.isdisjoint(text)
+
+
 def has_non_japanese_han(text: str) -> bool:
     """漢字のみの訳語が、日本語の文字コード (EUC-JP) に無い字を含むなら True."""
     if _HAN_ONLY_RE.fullmatch(text) is None:
         return False
     for char in text:
-        if char in _JAPANESE_NAME_VARIANTS:
+        if char in _JAPANESE_NAME_VARIANTS or char in _SHARED_HAN_VARIANTS:
             continue
         try:
             char.encode("euc_jp")

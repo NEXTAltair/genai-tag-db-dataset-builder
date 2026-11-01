@@ -301,6 +301,31 @@ def test_reclassify_moves_han_only_text_outside_japanese_charset() -> None:
     ).fetchall() == [(1, "晚礼服")]
 
 
+def test_reclassify_keeps_shared_variants_in_both_languages() -> None:
+    from genai_tag_db_dataset_builder.builder import _reclassify_chinese_ja_translations_as_zh
+
+    conn = _create_minimal_translations_db()
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+        [
+            (1, "ja", "輝夜姬"),
+            (2, "ja", "酒吞童子"),
+            (3, "ja", "姫"),
+        ],
+    )
+    conn.commit()
+
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 2
+    rows = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
+    assert rows == {
+        (1, "ja", "輝夜姬"),
+        (1, "zh", "輝夜姬"),
+        (2, "ja", "酒吞童子"),
+        (2, "zh", "酒吞童子"),
+        (3, "ja", "姫"),
+    }
+
+
 def test_delete_machine_fate_translations() -> None:
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE TAGS (tag_id INTEGER PRIMARY KEY, tag TEXT)")

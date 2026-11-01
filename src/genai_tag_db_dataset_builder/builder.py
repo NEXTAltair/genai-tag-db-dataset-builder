@@ -39,7 +39,11 @@ from genai_tag_db_dataset_builder.core.enrichment import apply_enrichment, load_
 from genai_tag_db_dataset_builder.core.master_data import initialize_master_data
 from genai_tag_db_dataset_builder.core.merge import merge_tags, normalize_tag, process_deprecated_tags
 from genai_tag_db_dataset_builder.core.normalize import canonicalize_source_tag
-from genai_tag_db_dataset_builder.core.scripts import SIMPLIFIED_ONLY_CHINESE_CHARS, has_non_japanese_han
+from genai_tag_db_dataset_builder.core.scripts import (
+    SIMPLIFIED_ONLY_CHINESE_CHARS,
+    has_non_japanese_han,
+    has_shared_han_variant,
+)
 from genai_tag_db_dataset_builder.core.translation_text import split_translation_text
 from genai_tag_db_dataset_builder.tools.migrate_db import migrate
 
@@ -822,6 +826,8 @@ def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
     UNIQUE(tag_id, language, translation) 衝突 (同内容の zh 行が既存) の場合は ja 行を
     削除する。それ以外は language を zh へ UPDATE する。
 
+    日中で共用する異体字だけが JIS 外の訳語 ("輝夜姬" 等) は、ja に残したまま zh にも登録する。
+
     NOTE: これは下限検出。「哥特」「公主裙」等の日本語の文字だけで書ける中国語は検出できない
     (取り込み元の language ラベリング見直しが根治、本処理は published DB の緩和策)。
 
@@ -836,9 +842,16 @@ def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
 
     changes_before = conn.total_changes
     for translation_id, tag_id, text in rows:
-        if not text or not (
+        if not text:
+            continue
+        if not (
             any(ch in SIMPLIFIED_ONLY_CHINESE_CHARS for ch in str(text)) or has_non_japanese_han(str(text))
         ):
+            if has_shared_han_variant(str(text)):
+                conn.execute(
+                    "INSERT OR IGNORE INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, 'zh', ?)",
+                    (tag_id, text),
+                )
             continue
         dup = conn.execute(
             "SELECT 1 FROM TAG_TRANSLATIONS WHERE tag_id = ? AND language = 'zh' AND translation = ?",
