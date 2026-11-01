@@ -77,6 +77,22 @@ def test_adapter_parses_stringified_other_names_and_splits_by_script(tmp_path: P
     }
 
 
+def test_adapter_keeps_ideographic_comma_in_titles(tmp_path: Path) -> None:
+    ds = Dataset.from_dict(
+        {
+            "title": ["25-ji_nightcord_de."],
+            "other_names": ["['25時、ナイトコードで。' 'ニーゴ']"],
+            "is_deleted": [False],
+        }
+    )
+    save_dir = tmp_path / "hf_wiki"
+    ds.save_to_disk(save_dir.as_posix())
+
+    frame = P1atdevDanbooruJaTagPairAdapter(save_dir.as_posix()).read()
+
+    assert {r["japanese"] for r in frame.to_dicts()} == {"25時、ナイトコードで。", "ニーゴ"}
+
+
 def test_parse_stringified_list_keeps_items_without_commas() -> None:
     assert _parse_stringified_list("['シーツ' 'ベッドシーツ']") == ["シーツ", "ベッドシーツ"]
     numpy_repr = chr(10).join(["['a'", " 'b'", " 'c']"])
