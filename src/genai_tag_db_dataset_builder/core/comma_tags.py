@@ -77,11 +77,10 @@ def add_comma_tag_aliases(conn: sqlite3.Connection, overrides: dict[str, str]) -
         if target_id is None:
             if reason == "rule":
                 continue
-            cursor = conn.execute(
-                "INSERT INTO TAGS (source_tag, tag) VALUES (?, ?)",
+            target_id = conn.execute(
+                "INSERT INTO TAGS (source_tag, tag) VALUES (?, ?) RETURNING tag_id",
                 (target_name.replace(" ", "_"), target_name),
-            )
-            target_id = int(cursor.lastrowid)
+            ).fetchone()[0]
             tag_ids[target_name] = target_id
         if target_id not in status:
             if reason == "rule":
