@@ -197,6 +197,41 @@ def run_health_checks(db_path: Path, out_dir: Path) -> Path:
             [(r["tag_id"], r["format_id"], r["n"]) for r in dup_status],
         )
 
+        # Alias references that do not end at a canonical tag in the same format
+        alias_chains = _fetchall(
+            con,
+            """
+            SELECT ts.format_id, ts.tag_id, ts.preferred_tag_id
+            FROM TAG_STATUS ts
+            JOIN TAG_STATUS tp ON tp.tag_id = ts.preferred_tag_id AND tp.format_id = ts.format_id
+            WHERE ts.alias = 1 AND tp.alias = 1
+            ORDER BY ts.format_id, ts.tag_id
+            """,
+        )
+        alias_chains_out = out_dir / "alias_chains.tsv"
+        alias_chains_count = _write_tsv(
+            alias_chains_out,
+            ["format_id", "tag_id", "preferred_tag_id"],
+            [(r["format_id"], r["tag_id"], r["preferred_tag_id"]) for r in alias_chains],
+        )
+
+        alias_missing_preferred = _fetchall(
+            con,
+            """
+            SELECT ts.format_id, ts.tag_id, ts.preferred_tag_id
+            FROM TAG_STATUS ts
+            LEFT JOIN TAG_STATUS tp ON tp.tag_id = ts.preferred_tag_id AND tp.format_id = ts.format_id
+            WHERE ts.alias = 1 AND tp.tag_id IS NULL
+            ORDER BY ts.format_id, ts.tag_id
+            """,
+        )
+        alias_missing_preferred_out = out_dir / "alias_missing_preferred.tsv"
+        alias_missing_preferred_count = _write_tsv(
+            alias_missing_preferred_out,
+            ["format_id", "tag_id", "preferred_tag_id"],
+            [(r["format_id"], r["tag_id"], r["preferred_tag_id"]) for r in alias_missing_preferred],
+        )
+
         # Alias consistency (alias=0 should always self-point)
         alias_incons = _fetchall(
             con,
@@ -264,6 +299,8 @@ def run_health_checks(db_path: Path, out_dir: Path) -> Path:
                 ("duplicate_tags", dup_tags_count),
                 ("duplicate_tag_status", dup_status_count),
                 ("alias_inconsistencies", alias_incons_count),
+                ("alias_chains", alias_chains_count),
+                ("alias_missing_preferred", alias_missing_preferred_count),
                 ("bad_usage_counts", bad_counts_count),
             ],
         )

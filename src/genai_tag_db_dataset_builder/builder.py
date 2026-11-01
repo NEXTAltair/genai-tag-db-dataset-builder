@@ -989,6 +989,47 @@ def _delete_split_title_fragments(conn: sqlite3.Connection) -> int:
     return int(conn.total_changes - changes_before)
 
 
+def _flatten_alias_chains(conn: sqlite3.Connection) -> int:
+    """alias の参照先が alias のとき、同じ format の最終タグへ付け替える.
+
+    "A -> B -> C" を "A -> C" にする。最終タグが同じ format の非 alias でない行と、循環している行は
+    解決先が無いので変更せず、report_db_health で報告する。
+
+    Returns:
+        付け替えた行数。
+    """
+    preferred_by_format: dict[int, dict[int, int]] = {}
+    canonical_by_format: dict[int, set[int]] = {}
+    for tag_id, format_id, alias, preferred_tag_id in conn.execute(
+        "SELECT tag_id, format_id, alias, preferred_tag_id FROM TAG_STATUS"
+    ):
+        if alias:
+            preferred_by_format.setdefault(int(format_id), {})[int(tag_id)] = int(preferred_tag_id)
+        else:
+            canonical_by_format.setdefault(int(format_id), set()).add(int(tag_id))
+
+    updates: list[tuple[int, int, int]] = []
+    for format_id, preferred in preferred_by_format.items():
+        canonical = canonical_by_format.get(format_id, set())
+        for tag_id, first_target in preferred.items():
+            if first_target not in preferred:
+                continue
+            seen = {tag_id}
+            target = first_target
+            while target in preferred and target not in seen:
+                seen.add(target)
+                target = preferred[target]
+            if target in canonical:
+                updates.append((target, tag_id, format_id))
+
+    conn.executemany(
+        "UPDATE TAG_STATUS SET preferred_tag_id = ? WHERE tag_id = ? AND format_id = ?",
+        updates,
+    )
+    conn.commit()
+    return len(updates)
+
+
 def _write_conflicts_tsv(path: Path, conflicts: list[_ConflictRow]) -> None:
     if not conflicts:
         return
@@ -2592,6 +2633,19 @@ def build_dataset(
         if report_dir_path:
             _write_non_e621_prefix_repairs_tsv(report_dir_path, prefix_repairs)
             _write_prefix_tag_renames_tsv(report_dir_path, prefix_renames)
+
+        chains_flattened = _flatten_alias_chains(conn)
+        if chains_flattened > 0:
+            source_effects.append(
+                {
+                    "source": "TAG_STATUS",
+                    "action": "repair",
+                    "rows_read": 0,
+                    "db_changes": chains_flattened,
+                    "note": "flatten_alias_chains",
+                }
+            )
+            logger.warning(f"[Repair] Flattened {chains_flattened} alias chains")
 
         # Legacy sheets enrich the final canonical tags, after normal source repair.
         for bundle_path in tag_table_bundles or []:
