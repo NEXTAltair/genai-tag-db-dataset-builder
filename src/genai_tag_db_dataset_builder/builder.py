@@ -29,6 +29,7 @@ from genai_tag_db_dataset_builder.core.alias_resolution import (
     AliasResolution,
     write_alias_conflicts_tsv,
 )
+from genai_tag_db_dataset_builder.core.comma_tags import add_comma_tag_aliases, write_comma_tag_aliases_tsv
 from genai_tag_db_dataset_builder.core.database import (
     apply_connection_pragmas,
     build_indexes,
@@ -2038,6 +2039,7 @@ def build_dataset(
     base_db_path: Path | str | None = None,
     overwrite: bool = False,
     alias_resolution: AliasResolution | None = None,
+    comma_tag_overrides: dict[str, str] | None = None,
     # 以下は後から追加した引数。既存の位置引数呼び出しを壊さないよう末尾に置く。
     hf_zh_translation_datasets: list[str] | None = None,
     hf_wiki_multilang_datasets: list[str] | None = None,
@@ -2065,6 +2067,7 @@ def build_dataset(
         base_db_path: ベースとなる既存SQLiteファイル（MIT版ビルド等で使用）。指定時はPhase 0/1をスキップ
         overwrite: 既存のoutput_pathを上書きするか
         alias_resolution: site_tags の alias conflict を手動解決する override（None なら first-win のみ）
+        comma_tag_overrides: カンマ付きタグの Danbooru 表記への手動対応（タグ -> 対応先）
 
     Raises:
         FileExistsError: output_pathが既に存在し、overwrite=False の場合
@@ -2646,6 +2649,21 @@ def build_dataset(
                 }
             )
             logger.warning(f"[Repair] Flattened {chains_flattened} alias chains")
+
+        comma_aliases = add_comma_tag_aliases(conn, comma_tag_overrides or {})
+        if comma_aliases:
+            source_effects.append(
+                {
+                    "source": "TAG_STATUS",
+                    "action": "repair",
+                    "rows_read": 0,
+                    "db_changes": len(comma_aliases),
+                    "note": "add_comma_tag_aliases",
+                }
+            )
+            logger.info(f"[Repair] Added {len(comma_aliases)} comma tag aliases")
+        if report_dir_path:
+            write_comma_tag_aliases_tsv(report_dir_path / "comma_tag_aliases.tsv", comma_aliases)
 
         # Legacy sheets enrich the final canonical tags, after normal source repair.
         for bundle_path in tag_table_bundles or []:
