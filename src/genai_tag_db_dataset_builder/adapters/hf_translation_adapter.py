@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,14 +76,21 @@ _OUTPUT_COLUMN: dict[str, str] = {"ja": "japanese", "zh": "zh", "ko": "ko"}
 
 
 def _parse_stringified_list(s: str) -> list[Any] | None:
-    """ "['a', 'b']" のような list の文字列表現を list に戻す（失敗時は None）."""
+    """ "['a', 'b']" のような list の文字列表現を list に戻す（失敗時は None）.
+
+    numpy 由来の "['a' 'b']" はカンマが無く、literal_eval では隣接文字列が連結されるので
+    文字列トークンを1つずつ読む。
+    """
     if not (s.startswith("[") and s.endswith("]")):
         return None
     try:
         parsed = ast.literal_eval(s)
     except (ValueError, SyntaxError):
         return None
-    return parsed if isinstance(parsed, list) else None
+    if not isinstance(parsed, list):
+        return None
+    tokens = tokenize.generate_tokens(io.StringIO(s).readline)
+    return [ast.literal_eval(token.string) for token in tokens if token.type == tokenize.STRING]
 
 
 def _explode_translations(value: Any) -> list[str]:

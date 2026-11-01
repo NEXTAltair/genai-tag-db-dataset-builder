@@ -5,7 +5,10 @@ from pathlib import Path
 import polars as pl
 from datasets import Dataset
 
-from genai_tag_db_dataset_builder.adapters.hf_translation_adapter import P1atdevDanbooruJaTagPairAdapter
+from genai_tag_db_dataset_builder.adapters.hf_translation_adapter import (
+    P1atdevDanbooruJaTagPairAdapter,
+    _parse_stringified_list,
+)
 
 
 def test_p1atdev_adapter_reads_local_saved_dataset(tmp_path: Path) -> None:
@@ -72,6 +75,16 @@ def test_adapter_parses_stringified_other_names_and_splits_by_script(tmp_path: P
         ("zh", "原創"),
         ("ko", "창작"),
     }
+
+
+def test_parse_stringified_list_keeps_items_without_commas() -> None:
+    assert _parse_stringified_list("['シーツ' 'ベッドシーツ']") == ["シーツ", "ベッドシーツ"]
+    numpy_repr = chr(10).join(["['a'", " 'b'", " 'c']"])
+    assert _parse_stringified_list(numpy_repr) == ["a", "b", "c"]
+    assert _parse_stringified_list("[\"it's\" 'b']") == ["it's", "b"]
+    assert _parse_stringified_list("['a', 'b']") == ["a", "b"]
+    assert _parse_stringified_list("[]") == []
+    assert _parse_stringified_list("not a list") is None
 
 
 def test_adapter_reads_zh_and_drops_kana_rows(tmp_path: Path) -> None:
