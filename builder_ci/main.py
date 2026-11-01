@@ -325,6 +325,7 @@ def _health_to_manifest(summary: dict) -> tuple[dict | None, dict | None]:
         "orphan_tag_status": _coerce_int(summary.get("orphan_tag_status")),
         "orphan_usage_counts": _coerce_int(summary.get("orphan_usage_counts")),
         "orphan_translations": _coerce_int(summary.get("orphan_translations")),
+        "blank_tags": _coerce_int(summary.get("blank_tags")),
         "duplicate_tags": _coerce_int(summary.get("duplicate_tags")),
         "duplicate_tag_status": _coerce_int(summary.get("duplicate_tag_status")),
         "alias_inconsistencies": _coerce_int(summary.get("alias_inconsistencies")),
