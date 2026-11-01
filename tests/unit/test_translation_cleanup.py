@@ -2,6 +2,7 @@ import sqlite3
 
 from genai_tag_db_dataset_builder.builder import (
     _delete_ja_translations_by_value_list,
+    _delete_machine_fate_translations,
     _delete_split_title_fragments,
     _delete_translations_ascii_only_for_languages,
     _delete_translations_missing_required_script,
@@ -276,6 +277,105 @@ def test_delete_underscore_alias_translations_removes_only_underscore_en() -> No
     assert ("en", "sparkles") in remaining
     assert ("ja", "_test") in remaining
     assert ("en", "a_b") in remaining
+
+
+def test_reclassify_moves_han_only_text_outside_japanese_charset() -> None:
+    from genai_tag_db_dataset_builder.builder import _reclassify_chinese_ja_translations_as_zh
+
+    conn = _create_minimal_translations_db()
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+        [
+            (1, "ja", "晚礼服"),
+            (2, "ja", "绫清竹"),
+            (3, "ja", "動物"),
+            (4, "ja", "毛巾"),
+            (5, "ja", "豪德寺三花"),
+            (5, "ja", "豪徳寺ミケ"),
+        ],
+    )
+    conn.commit()
+
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 3
+    rows = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
+    assert rows == {
+        (1, "zh", "晚礼服"),
+        (2, "zh", "绫清竹"),
+        (3, "ja", "動物"),
+        (4, "ja", "毛巾"),
+        (5, "zh", "豪德寺三花"),
+        (5, "ja", "豪徳寺ミケ"),
+    }
+
+
+def test_reclassify_keeps_shared_variants_in_both_languages() -> None:
+    from genai_tag_db_dataset_builder.builder import _reclassify_chinese_ja_translations_as_zh
+
+    conn = _create_minimal_translations_db()
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+        [
+            (1, "ja", "輝夜姬"),
+            (2, "ja", "酒吞童子"),
+            (3, "ja", "俱利伽羅"),
+            (4, "ja", "剝離"),
+            (5, "ja", "髙橋"),
+            (6, "ja", "宮﨑敏郎"),
+            (7, "ja", "姫"),
+        ],
+    )
+    conn.commit()
+
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 6
+    rows = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
+    shared = {1: "輝夜姬", 2: "酒吞童子", 3: "俱利伽羅", 4: "剝離", 5: "髙橋", 6: "宮﨑敏郎"}
+    assert rows == {
+        *((tag_id, "ja", text) for tag_id, text in shared.items()),
+        *((tag_id, "zh", text) for tag_id, text in shared.items()),
+        (7, "ja", "姫"),
+    }
+
+
+def test_delete_machine_fate_translations() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE TAGS (tag_id INTEGER PRIMARY KEY, tag TEXT)")
+    conn.execute(
+        "CREATE TABLE TAG_TRANSLATIONS (translation_id INTEGER PRIMARY KEY, tag_id INTEGER, "
+        "language TEXT, translation TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO TAGS VALUES (?, ?)",
+        [
+            (1, "salieri (fate)"),
+            (2, "bb (fate/extra)"),
+            (3, "gae buidhe (fate)"),
+            (4, "other tag"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO TAG_TRANSLATIONS (tag_id, language, translation) VALUES (?, ?, ?)",
+        [
+            (1, "ja", "サリエリ"),
+            (1, "ja", "アントニオ・サリエリ（運命）"),
+            (2, "ja", "BB（運命/エクストラ）"),
+            (3, "ja", "運命の黄薔薇"),
+            (3, "ja", "黄薔薇"),
+            (4, "ja", "何か（運命）"),
+            (4, "ja", "何か"),
+        ],
+    )
+    conn.commit()
+
+    assert _delete_machine_fate_translations(conn) == 1
+    remaining = {row[0] for row in conn.execute("SELECT translation FROM TAG_TRANSLATIONS")}
+    assert remaining == {
+        "サリエリ",
+        "BB（運命/エクストラ）",
+        "運命の黄薔薇",
+        "黄薔薇",
+        "何か（運命）",
+        "何か",
+    }
 
 
 def test_reclassify_chinese_ja_empty_is_noop() -> None:
