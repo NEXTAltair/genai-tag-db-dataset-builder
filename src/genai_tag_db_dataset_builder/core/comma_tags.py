@@ -45,6 +45,17 @@ def _rule_target(tag: str, usage_of_target: int) -> bool:
     )
 
 
+def _canonical_target(status: dict[int, tuple[bool, int, int]], tag_id: int) -> int | None:
+    """alias を辿った先の正規タグを返す。循環や解決先なしなら None."""
+    seen: set[int] = set()
+    while tag_id in status and status[tag_id][0] and tag_id not in seen:
+        seen.add(tag_id)
+        tag_id = status[tag_id][1]
+    if tag_id in status and not status[tag_id][0]:
+        return tag_id
+    return None
+
+
 def add_comma_tag_aliases(conn: sqlite3.Connection, overrides: dict[str, str]) -> list[dict[str, str]]:
     """カンマ付きタグを Danbooru 形式の alias として登録する.
 
@@ -91,14 +102,11 @@ def add_comma_tag_aliases(conn: sqlite3.Connection, overrides: dict[str, str]) -
             )
             status[target_id] = (False, target_id, _GENERAL_TYPE_ID)
 
-        is_alias, preferred_tag_id, type_id = status[target_id]
-        if is_alias:
-            target_id = preferred_tag_id
-            if target_id not in status:
-                continue
-            type_id = status[target_id][2]
-        if target_id == tag_id:
+        canonical_id = _canonical_target(status, target_id)
+        if canonical_id is None or canonical_id == tag_id:
             continue
+        target_id = canonical_id
+        type_id = status[target_id][2]
         if reason == "rule" and not _rule_target(tag, int(usage.get(target_id, 0))):
             continue
 

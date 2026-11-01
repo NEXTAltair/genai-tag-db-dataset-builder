@@ -132,6 +132,52 @@ def test_override_can_target_multi_hop_alias(tmp_path: Path) -> None:
     assert _preferred(conn, "title, en") == "romaji"
 
 
+def test_rule_checks_usage_of_final_canonical_tag(tmp_path: Path) -> None:
+    conn = _db(
+        tmp_path / "db.sqlite",
+        ["a long title, here", "a long title here", "intermediate", "canonical"],
+        {"canonical": (3, 100)},
+    )
+    ids = dict(conn.execute("SELECT tag, tag_id FROM TAGS"))
+    conn.executemany(
+        "INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id) VALUES (?, 1, 3, 1, ?)",
+        [(ids["a long title here"], ids["intermediate"]), (ids["intermediate"], ids["canonical"])],
+    )
+
+    add_comma_tag_aliases(conn, {})
+
+    assert _preferred(conn, "a long title, here") == "canonical"
+
+
+def test_target_chain_leading_back_to_source_is_skipped(tmp_path: Path) -> None:
+    conn = _db(
+        tmp_path / "db.sqlite",
+        ["title,", "title", "other title"],
+        {"title,": (0, 5)},
+    )
+    ids = dict(conn.execute("SELECT tag, tag_id FROM TAGS"))
+    conn.executemany(
+        "INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id) VALUES (?, 1, 0, 1, ?)",
+        [(ids["title"], ids["other title"]), (ids["other title"], ids["title,"])],
+    )
+
+    assert add_comma_tag_aliases(conn, {}) == []
+    assert conn.execute(
+        "SELECT alias, preferred_tag_id FROM TAG_STATUS WHERE tag_id = ?", (ids["title,"],)
+    ).fetchone() == (0, ids["title,"])
+
+
+def test_target_chain_ending_in_cycle_is_skipped(tmp_path: Path) -> None:
+    conn = _db(tmp_path / "db.sqlite", ["title,", "title", "other title"], {})
+    ids = dict(conn.execute("SELECT tag, tag_id FROM TAGS"))
+    conn.executemany(
+        "INSERT INTO TAG_STATUS (tag_id, format_id, type_id, alias, preferred_tag_id) VALUES (?, 1, 0, 1, ?)",
+        [(ids["title"], ids["other title"]), (ids["other title"], ids["title"])],
+    )
+
+    assert add_comma_tag_aliases(conn, {}) == []
+
+
 def test_override_creates_missing_target(tmp_path: Path) -> None:
     conn = _db(tmp_path / "db.sqlite", ["paws, inc."], {})
 
