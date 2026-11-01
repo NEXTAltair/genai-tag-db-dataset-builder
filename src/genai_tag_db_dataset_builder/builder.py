@@ -826,7 +826,7 @@ def _reclassify_chinese_ja_translations_as_zh(conn: sqlite3.Connection) -> int:
     UNIQUE(tag_id, language, translation) 衝突 (同内容の zh 行が既存) の場合は ja 行を
     削除する。それ以外は language を zh へ UPDATE する。
 
-    文字からは日中を判断できない訳語 ("輝夜姬" "德川" 等) は、ja に残したまま zh にも登録する。
+    文字からは日中を判断できない訳語 ("輝夜姬" "俱利伽羅" 等) は、ja に残したまま zh にも登録する。
 
     NOTE: これは下限検出。「哥特」「公主裙」等の日本語の文字だけで書ける中国語は検出できない
     (取り込み元の language ラベリング見直しが根治、本処理は published DB の緩和策)。

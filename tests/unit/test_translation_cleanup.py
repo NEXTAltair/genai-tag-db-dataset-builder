@@ -290,17 +290,21 @@ def test_reclassify_moves_han_only_text_outside_japanese_charset() -> None:
             (2, "ja", "绫清竹"),
             (3, "ja", "動物"),
             (4, "ja", "毛巾"),
+            (5, "ja", "豪德寺三花"),
+            (5, "ja", "豪徳寺ミケ"),
         ],
     )
     conn.commit()
 
-    assert _reclassify_chinese_ja_translations_as_zh(conn) == 2
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 3
     rows = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
     assert rows == {
         (1, "zh", "晚礼服"),
         (2, "zh", "绫清竹"),
         (3, "ja", "動物"),
         (4, "ja", "毛巾"),
+        (5, "zh", "豪德寺三花"),
+        (5, "ja", "豪徳寺ミケ"),
     }
 
 
@@ -315,21 +319,20 @@ def test_reclassify_keeps_shared_variants_in_both_languages() -> None:
             (2, "ja", "酒吞童子"),
             (3, "ja", "俱利伽羅"),
             (4, "ja", "剝離"),
-            (5, "ja", "德川"),
-            (6, "ja", "髙橋"),
-            (7, "ja", "宮﨑敏郎"),
-            (8, "ja", "姫"),
+            (5, "ja", "髙橋"),
+            (6, "ja", "宮﨑敏郎"),
+            (7, "ja", "姫"),
         ],
     )
     conn.commit()
 
-    assert _reclassify_chinese_ja_translations_as_zh(conn) == 7
+    assert _reclassify_chinese_ja_translations_as_zh(conn) == 6
     rows = set(conn.execute("SELECT tag_id, language, translation FROM TAG_TRANSLATIONS").fetchall())
-    shared = {1: "輝夜姬", 2: "酒吞童子", 3: "俱利伽羅", 4: "剝離", 5: "德川", 6: "髙橋", 7: "宮﨑敏郎"}
+    shared = {1: "輝夜姬", 2: "酒吞童子", 3: "俱利伽羅", 4: "剝離", 5: "髙橋", 6: "宮﨑敏郎"}
     assert rows == {
         *((tag_id, "ja", text) for tag_id, text in shared.items()),
         *((tag_id, "zh", text) for tag_id, text in shared.items()),
-        (8, "ja", "姫"),
+        (7, "ja", "姫"),
     }
 
 
